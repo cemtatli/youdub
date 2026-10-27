@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "youdub",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Turkish voice-over for YouTube, generated on your own machine.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp6eLmfiPMNbrMOFUU2c+SAnuv1gqP7QSBRSCfRFTKew/9FnES+MrtmsFhDsjKHI/r++B+ubJo2lB5leATzgbgDCtXqn547dclDBAUZNhYXCYlZFzRXS6t7tH71xjl70XIniMDk6sxKNDQddDEZg8pRx3C+9rOEpHc7TQXp43lc59GmKo8y0D6rFeZ5jpE1e+QvnsYyRVsRg1OhVAg7QhJiPSVyM28TUoRtUrLSECPJpcRrdYsJjVUtrm2Y9vz79DRa1j7O/FjSzHyVZff+eGkjMutZQ03LOoOPSDw7u7GBQicvqkuwFGCi60iDJGsZSZ4PesJ0NX4LzIMl8T1kPi8QIDAQAB",
   "permissions": [
@@ -24,7 +24,8 @@
         "https://www.youtube.com/*"
       ],
       "js": [
-        "dub.js"
+        "dub.js",
+        "actions.js"
       ],
       "world": "MAIN",
       "run_at": "document_start"

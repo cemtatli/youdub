@@ -51,6 +51,16 @@ so in the top-left message.
 
 To run the voice by hand instead (for debugging): `server/run.sh`.
 
+## Extra buttons
+
+`actions.js` adds two buttons to the Like / Share row under the video (YouTube's own Save
+and Ask buttons are removed from that row and its "..." menu):
+
+- **Watch later** (clock): one click adds the video to Watch later, again removes it. Uses
+  YouTube's InnerTube API with your signed-in session (`browse/edit_playlist`).
+- **Minimal mode** (window icon): hides the recommendations. If the video has chapters they
+  open in the right column instead; otherwise the video is centred. Remembered across videos.
+
 ## Debugging
 
 Page console: `__youdub.state` (cues, index, engine), `__youdub.setOn(true)`.
