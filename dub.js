@@ -19,6 +19,7 @@
     savedVolume: null,
     timer: 0,
     loading: false,
+    engine: "browser",
   };
 
   const getPlayer = () => document.getElementById("movie_player");
@@ -205,11 +206,95 @@
     state.savedVolume = null;
   }
 
-  function speak(cue, next, video) {
+  // Local EMA Lightning voice (server/run.sh). Falls back to the browser's voice.
+  const TTS_URL = "http://127.0.0.1:7845";
+  const PREFETCH_AHEAD = 20; // seconds of upcoming sentences to synthesize early
+  const audioCache = new Map(); // cue index -> Promise<{ url, duration } | null>
+  let current = null; // the <audio> playing now (EMA engine)
+  let busy = false; // a sentence is playing or about to
+  let generation = 0; // bumps on seek/stop so stale replies are dropped
+
+  // The first local request can take a few seconds (Chrome's local network check).
+  async function serverUp() {
+    for (const timeout of [4000, 2000]) {
+      try {
+        const response = await pageFetch(`${TTS_URL}/health`, { signal: AbortSignal.timeout(timeout) });
+        if (response.ok) return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  function synth(index) {
+    if (!audioCache.has(index)) {
+      const request = pageFetch(`${TTS_URL}/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: state.cues[index].text }),
+      })
+        .then((response) => (response.ok ? response.blob() : null))
+        .then(
+          (blob) =>
+            blob &&
+            new Promise((resolve) => {
+              const url = URL.createObjectURL(blob);
+              const probe = new Audio(url);
+              probe.addEventListener("loadedmetadata", () => resolve({ url, duration: probe.duration }), { once: true });
+              probe.addEventListener("error", () => resolve(null), { once: true });
+            }),
+        )
+        .catch(() => null);
+      audioCache.set(index, request);
+    }
+    return audioCache.get(index);
+  }
+
+  function prefetch(time) {
+    for (let i = state.index; i < state.cues.length && state.cues[i].start < time + PREFETCH_AHEAD; i += 1) synth(i);
+  }
+
+  function clearAudioCache() {
+    for (const request of audioCache.values()) request.then((clip) => clip && URL.revokeObjectURL(clip.url));
+    audioCache.clear();
+  }
+
+  // How long this sentence may take before the next one should start.
+  function slotFor(cue, next, video) {
     const now = Math.max(video.currentTime, cue.start);
-    const slot = Math.max(0.8, (next ? next.start : cue.end + 1.5) - now);
+    return Math.max(0.8, (next ? next.start : cue.end + 1.5) - now);
+  }
+
+  function finish(video) {
+    busy = false;
+    current = null;
+    setTimeout(() => {
+      if (!busy) unduck(video);
+    }, 300);
+  }
+
+  function speakEma(index, video) {
+    const cue = state.cues[index];
+    const next = state.cues[index + 1];
+    const ticket = generation;
+    busy = true;
+    synth(index).then((clip) => {
+      if (ticket !== generation) return;
+      if (!clip || video.currentTime - cue.start > LATE_SKIP) return finish(video);
+      const audio = new Audio(clip.url);
+      const stretch = Math.min(MAX_RATE, Math.max(1, clip.duration / slotFor(cue, next, video)));
+      audio.playbackRate = stretch * video.playbackRate; // pitch is preserved by default
+      audio.addEventListener("ended", () => finish(video), { once: true });
+      audio.addEventListener("error", () => finish(video), { once: true });
+      current = audio;
+      duck(video);
+      if (video.paused) return; // play resumes it
+      audio.play().catch(() => finish(video));
+    });
+  }
+
+  function speakBrowser(cue, next, video) {
     const needed = cue.text.length / CHARS_PER_SEC;
-    const rate = Math.min(MAX_RATE, Math.max(1, needed / slot)) * video.playbackRate;
+    const rate = Math.min(MAX_RATE, Math.max(1, needed / slotFor(cue, next, video))) * video.playbackRate;
 
     const utterance = new SpeechSynthesisUtterance(cue.text);
     utterance.lang = "tr-TR";
@@ -224,6 +309,8 @@
     speechSynthesis.speak(utterance);
   }
 
+  const speaking = () => (state.engine === "ema" ? busy : speechSynthesis.speaking);
+
   function resetIndex(time) {
     const i = state.cues.findIndex((cue) => cue.end > time);
     state.index = i === -1 ? state.cues.length : i;
@@ -233,6 +320,7 @@
     const video = getVideo();
     if (!video || !state.cues.length || video.paused) return;
     const time = video.currentTime;
+    if (state.engine === "ema") prefetch(time);
 
     while (state.index < state.cues.length) {
       const cue = state.cues[state.index];
@@ -241,8 +329,9 @@
         state.index += 1; // fell behind; skip rather than drift
         continue;
       }
-      if (speechSynthesis.speaking) return; // wait for the current sentence to finish
-      speak(cue, state.cues[state.index + 1], video);
+      if (speaking()) return; // wait for the current sentence to finish
+      if (state.engine === "ema") speakEma(state.index, video);
+      else speakBrowser(cue, state.cues[state.index + 1], video);
       state.index += 1;
       return;
     }
@@ -251,7 +340,11 @@
   // --- control --------------------------------------------------------------
 
   function stopSpeech() {
+    generation += 1;
     speechSynthesis.cancel();
+    current?.pause();
+    current = null;
+    busy = false;
     const video = getVideo();
     if (video) unduck(video);
   }
@@ -267,8 +360,10 @@
         state.videoId = videoId;
       }
       if (!state.on) return; // turned off while loading
-      if (!state.voice) toast("Türkçe ses bulunamadı, varsayılan ses kullanılıyor.");
-      else toast(`Türkçe ses açık (${state.voice.name})`);
+      state.engine = (await serverUp()) ? "ema" : "browser";
+      if (state.engine === "ema") toast("Türkçe ses açık (EMA Lightning)");
+      else if (!state.voice) toast("Türkçe ses bulunamadı, varsayılan ses kullanılıyor.");
+      else toast(`Türkçe ses açık (${state.voice.name}). Doğal ses için server/run.sh'i başlat.`);
       resetIndex(getVideo()?.currentTime ?? 0);
       clearInterval(state.timer);
       state.timer = setInterval(tick, 150);
@@ -365,14 +460,18 @@
   document.addEventListener(
     "pause",
     (event) => {
-      if (state.on && event.target === getVideo()) speechSynthesis.pause();
+      if (!state.on || event.target !== getVideo()) return;
+      speechSynthesis.pause();
+      current?.pause();
     },
     true,
   );
   document.addEventListener(
     "play",
     (event) => {
-      if (state.on && event.target === getVideo()) speechSynthesis.resume();
+      if (!state.on || event.target !== getVideo()) return;
+      speechSynthesis.resume();
+      current?.play().catch(() => {});
     },
     true,
   );
@@ -381,6 +480,7 @@
   document.addEventListener("yt-navigate-finish", () => {
     mountButton();
     stop();
+    clearAudioCache();
     state.cues = [];
     state.videoId = null;
     if (state.on) start();
