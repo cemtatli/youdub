@@ -1,4 +1,4 @@
-// yt-dub v1: speaks YouTube captions in Turkish while the video plays.
+// youdub: speaks YouTube captions in Turkish while the video plays.
 // Runs in the page (MAIN world) so it can reach YouTube's player API.
 // Caption URL + PO token approach learned from voice-over-translation (MIT):
 // https://github.com/ilyhalight/voice-over-translation
@@ -16,7 +16,7 @@
   const MAX_STRETCH = 1.1; // extra playbackRate at play time
   const EMA_LATE_SKIP = 4;
   const MIN_VIDEO_RATE = 0.9; // slow the video this far (relative) when Turkish still won't fit
-  const log = (...args) => console.debug("[yt-dub]", ...args);
+  const log = (...args) => console.debug("[youdub]", ...args);
 
   const state = {
     on: false,
@@ -222,6 +222,33 @@
   let busy = false; // a sentence is playing or about to
   let generation = 0; // bumps on seek/stop so stale replies are dropped
 
+  // Ask the extension (bridge.js → background.js) to start the local voice. It runs only
+  // while TR is on. Resolves true when the voice answers, false to use the browser voice.
+  function startVoice() {
+    return new Promise((resolve) => {
+      const done = (ok) => {
+        window.removeEventListener("message", onMessage);
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const onMessage = (event) => {
+        if (event.source !== window || event.data?.source !== "youdub-ext") return;
+        if (event.data.type === "ready") done(true);
+        if (event.data.type === "error") {
+          log("voice error", event.data.message);
+          done(false);
+        }
+      };
+      const timer = setTimeout(() => done(false), 20000); // first start loads the model
+      window.addEventListener("message", onMessage);
+      window.postMessage({ source: "youdub-page", type: "start" }, "*");
+    }).then(async (ok) => ok && (await serverUp()));
+  }
+
+  function stopVoice() {
+    window.postMessage({ source: "youdub-page", type: "stop" }, "*");
+  }
+
   // The first local request can take a few seconds (Chrome's local network check).
   async function serverUp() {
     for (const timeout of [4000, 2000]) {
@@ -402,10 +429,12 @@
         state.videoId = videoId;
       }
       if (!state.on) return; // turned off while loading
-      state.engine = (await serverUp()) ? "ema" : "browser";
+      toast("Türkçe ses başlatılıyor…");
+      state.engine = (await startVoice()) ? "ema" : "browser";
+      if (!state.on) return stopVoice();
       if (state.engine === "ema") toast("Türkçe ses açık (EMA Lightning)");
       else if (!state.voice) toast("Türkçe ses bulunamadı, varsayılan ses kullanılıyor.");
-      else toast(`Türkçe ses açık (${state.voice.name}). Doğal ses için server/run.sh'i başlat.`);
+      else toast(`Türkçe ses açık (${state.voice.name}). Doğal ses için install.sh'i bir kez çalıştır.`);
       const video = getVideo();
       if (video && !slowed) baseRate = video.playbackRate;
       resetIndex(video?.currentTime ?? 0);
@@ -423,11 +452,12 @@
   function stop() {
     clearInterval(state.timer);
     stopSpeech();
+    stopVoice();
   }
 
   function setOn(on) {
     state.on = on;
-    const button = document.getElementById("yt-dub-toggle");
+    const button = document.getElementById("youdub-toggle");
     if (button) {
       button.setAttribute("aria-pressed", String(on));
       button.style.opacity = on ? "1" : "0.6";
@@ -444,10 +474,10 @@
   function toast(message) {
     const host = getPlayer();
     if (!host) return;
-    let box = document.getElementById("yt-dub-toast");
+    let box = document.getElementById("youdub-toast");
     if (!box) {
       box = document.createElement("div");
-      box.id = "yt-dub-toast";
+      box.id = "youdub-toast";
       Object.assign(box.style, {
         position: "absolute",
         top: "12px",
@@ -473,11 +503,11 @@
 
   function mountButton() {
     const controls = document.querySelector(".ytp-right-controls");
-    if (!controls || document.getElementById("yt-dub-toggle")) return;
+    if (!controls || document.getElementById("youdub-toggle")) return;
     const button = document.createElement("button");
-    button.id = "yt-dub-toggle";
+    button.id = "youdub-toggle";
     button.className = "ytp-button";
-    button.title = "Türkçe seslendirme (yt-dub)";
+    button.title = "Türkçe seslendirme (youdub)";
     button.setAttribute("aria-pressed", String(state.on));
     button.textContent = "TR";
     Object.assign(button.style, {
@@ -549,7 +579,8 @@
   // YouTube is a single-page app: a new video does not reload the page.
   document.addEventListener("yt-navigate-finish", () => {
     mountButton();
-    stop();
+    clearInterval(state.timer); // keep the voice running between videos
+    stopSpeech();
     clearAudioCache();
     state.cues = [];
     state.videoId = null;
@@ -558,6 +589,6 @@
 
   new MutationObserver(mountButton).observe(document.documentElement, { childList: true, subtree: true });
 
-  // Debug hook for the console: window.__ytDub.state, window.__ytDub.loadCues()
-  window.__ytDub = { state, loadCues, buildCues, setOn };
+  // Debug hook for the console: window.__youdub.state, window.__youdub.loadCues()
+  window.__youdub = { state, loadCues, buildCues, setOn };
 })();

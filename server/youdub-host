@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher Chrome runs for the native messaging host (see install.sh).
+cd "$(dirname "$0")"
+exec .venv/bin/python host.py

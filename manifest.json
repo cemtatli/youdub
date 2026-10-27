@@ -1,13 +1,38 @@
 {
   "manifest_version": 3,
-  "name": "yt-dub",
-  "version": "0.1.0",
-  "description": "Speaks YouTube captions in Turkish while you watch.",
+  "name": "youdub",
+  "version": "0.2.0",
+  "description": "Turkish voice-over for YouTube, generated on your own machine.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp6eLmfiPMNbrMOFUU2c+SAnuv1gqP7QSBRSCfRFTKew/9FnES+MrtmsFhDsjKHI/r++B+ubJo2lB5leATzgbgDCtXqn547dclDBAUZNhYXCYlZFzRXS6t7tH71xjl70XIniMDk6sxKNDQddDEZg8pRx3C+9rOEpHc7TQXp43lc59GmKo8y0D6rFeZ5jpE1e+QvnsYyRVsRg1OhVAg7QhJiPSVyM28TUoRtUrLSECPJpcRrdYsJjVUtrm2Y9vz79DRa1j7O/FjSzHyVZff+eGkjMutZQ03LOoOPSDw7u7GBQicvqkuwFGCi60iDJGsZSZ4PesJ0NX4LzIMl8T1kPi8QIDAQAB",
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["dub.js"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "dub.js"
+      ],
       "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
       "run_at": "document_start"
     }
   ]

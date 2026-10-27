@@ -1,4 +1,4 @@
-"""Local Turkish TTS helper for yt-dub, backed by EMA Lightning.
+"""Local Turkish TTS helper for youdub, backed by EMA Lightning.
 
 Listens on 127.0.0.1 only and answers requests whose Origin is YouTube, so other
 websites and other machines on the network cannot use it.
@@ -21,12 +21,16 @@ PORT = 7845
 ALLOWED_ORIGINS = {"https://www.youtube.com", "https://m.youtube.com"}
 MAX_CHARS = 600
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-log = logging.getLogger("yt-dub")
+log = logging.getLogger("youdub")
+tts = None
 
-# On an Apple M3 the CPU was ~22x faster than real time; MPS was slower for this tiny model.
-tts = EMA(device="cpu")
-tts.say("Hazır.")  # warm-up
+
+def load():
+    """Load the model once. On an Apple M3 the CPU was ~22x faster than real time; MPS was slower."""
+    global tts
+    if tts is None:
+        tts = EMA(device="cpu")
+        tts.say("Hazır.")  # warm-up
 
 
 def to_wav(audio, sample_rate):
@@ -96,6 +100,12 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, to_wav(speech.audio, speech.sample_rate), "audio/wav")
 
 
+def make_server():
+    return ThreadingHTTPServer((HOST, PORT), Handler)
+
+
 if __name__ == "__main__":
-    log.info("yt-dub TTS listening on http://%s:%d", HOST, PORT)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    load()
+    log.info("youdub TTS listening on http://%s:%d", HOST, PORT)
+    make_server().serve_forever()
