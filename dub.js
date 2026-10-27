@@ -15,6 +15,7 @@
   const MAX_SPEED = 1.25; // EMA speed when synthesizing
   const MAX_STRETCH = 1.1; // extra playbackRate at play time
   const EMA_LATE_SKIP = 4;
+  const MIN_VIDEO_RATE = 0.9; // slow the video this far (relative) when Turkish still won't fit
   const log = (...args) => console.debug("[yt-dub]", ...args);
 
   const state = {
@@ -280,9 +281,24 @@
     return Math.max(0.8, (next ? next.start : cue.end + 1.5) - now);
   }
 
+  // The user's own speed choice; our temporary slow-downs are applied on top of it.
+  let baseRate = 1;
+  let slowed = false;
+  function setVideoRate(video, rate) {
+    if (Math.abs(video.playbackRate - rate) < 0.001) return;
+    state.ownRateChange = true;
+    video.playbackRate = rate;
+  }
+  function restoreRate(video) {
+    if (!slowed) return;
+    slowed = false;
+    setVideoRate(video, baseRate);
+  }
+
   function finish(video) {
     busy = false;
     current = null;
+    restoreRate(video);
     setTimeout(() => {
       if (!busy) unduck(video);
     }, 300);
@@ -297,8 +313,15 @@
       if (ticket !== generation) return;
       if (!clip || video.currentTime - cue.start > EMA_LATE_SKIP) return finish(video);
       const audio = new Audio(clip.url);
-      const stretch = Math.min(MAX_STRETCH, Math.max(1, clip.duration / slotFor(cue, next, video)));
-      audio.playbackRate = stretch * video.playbackRate; // pitch is preserved by default
+      const room = slotFor(cue, next, video); // video seconds until the next sentence
+      const stretch = Math.min(MAX_STRETCH, Math.max(1, clip.duration / room));
+      audio.playbackRate = stretch * baseRate; // pitch is preserved by default
+      // Still too long: slow the video a little for this sentence so the next one waits.
+      const slow = Math.max(MIN_VIDEO_RATE, Math.min(1, (room * stretch) / clip.duration));
+      if (slow < 0.995) {
+        slowed = true;
+        setVideoRate(video, baseRate * slow);
+      }
       audio.addEventListener("ended", () => finish(video), { once: true });
       audio.addEventListener("error", () => finish(video), { once: true });
       current = audio;
@@ -362,7 +385,10 @@
     current = null;
     busy = false;
     const video = getVideo();
-    if (video) unduck(video);
+    if (video) {
+      unduck(video);
+      restoreRate(video);
+    }
   }
 
   async function start() {
@@ -380,7 +406,9 @@
       if (state.engine === "ema") toast("Türkçe ses açık (EMA Lightning)");
       else if (!state.voice) toast("Türkçe ses bulunamadı, varsayılan ses kullanılıyor.");
       else toast(`Türkçe ses açık (${state.voice.name}). Doğal ses için server/run.sh'i başlat.`);
-      resetIndex(getVideo()?.currentTime ?? 0);
+      const video = getVideo();
+      if (video && !slowed) baseRate = video.playbackRate;
+      resetIndex(video?.currentTime ?? 0);
       clearInterval(state.timer);
       state.timer = setInterval(tick, 150);
     } catch (error) {
@@ -482,6 +510,17 @@
     },
     true,
   );
+  // Remember the speed the user picks; ignore the changes we make ourselves.
+  document.addEventListener(
+    "ratechange",
+    (event) => {
+      if (event.target !== getVideo()) return;
+      if (state.ownRateChange) state.ownRateChange = false;
+      else baseRate = event.target.playbackRate;
+    },
+    true,
+  );
+
   // Buffering: the video stops but its "paused" flag stays false.
   document.addEventListener(
     "waiting",

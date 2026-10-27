@@ -3,8 +3,8 @@
 Chrome extension that speaks YouTube captions in Turkish while the video plays.
 
 It uses YouTube's own Turkish captions (auto-translated when needed) and a natural Turkish
-voice that runs on your machine ([EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning),
-~34 MB, Apache 2.0). Without the local voice it falls back to the browser's Turkish voice.
+voice that runs on your machine ([EMA Lightning](https://github.com/canberk7/ema-lightning),
+model on [Hugging Face](https://huggingface.co/canberkkkkkk/ema-lightning), ~34 MB, Apache 2.0). Without the local voice it falls back to the browser's Turkish voice.
 No cloud, no API keys.
 
 ## Install (unpacked)
@@ -32,7 +32,10 @@ YouTube to reach a local address.
   extension keeps a copy of that response. A direct request is the fallback.
 - Merges caption fragments into sentences (punctuation, a pause over 1.2 s, or ~7 s).
 - Synthesizes the next ~20 s of sentences ahead of time, then plays each one when the video
-  reaches it, slightly faster (pitch kept) if it would overrun the next one. Original audio drops to 15% while Turkish speech plays.
+  reaches it. Turkish usually runs longer than English, so a sentence that won't fit is
+  first spoken a bit faster by the voice itself (up to 1.25x), then stretched slightly
+  (up to 1.1x, pitch kept), and finally the video slows down for that sentence (down to
+  0.9x of your chosen speed) and returns to normal right after. Original audio drops to 15% while Turkish speech plays.
 - Follows pause, play, seek and in-app navigation to another video.
 
 ## Debugging
