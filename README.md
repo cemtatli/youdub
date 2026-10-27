@@ -12,7 +12,7 @@ No cloud, no API keys.
 
 1. Run once: `./install.sh`
    Creates `server/.venv` (EMA Lightning + PyTorch) and registers the local voice with
-   Chrome, Brave and Chromium (native messaging manifest `com.youdub.tts`).
+   Chrome, Brave, Chromium and Helium (native messaging manifest `com.youdub.tts`).
 2. Open `chrome://extensions`, turn on **Developer mode**, **Load unpacked** → this folder.
    The extension ID is fixed (`eadpkhjldhfpfdaaabibjmijjmgnefdk`) by the `key` in
    `manifest.json`, so the voice only accepts this extension.
@@ -25,16 +25,27 @@ so in the top-left message.
 
 - **TR on** → `dub.js` (page) asks `bridge.js` → `background.js` to start the voice.
   Chrome launches `server/youdub-host`, which loads the model (~2 s) and serves TTS on
-  `127.0.0.1:7845`, answering requests from YouTube pages only. ~260 MB RAM while on.
+  `127.0.0.1:7845`, answering the youdub extension only. Pages can't reach local
+  addresses, so `background.js` makes the voice requests for the page. ~260 MB RAM while on.
 - **Captions**: picks the video's spoken language from the player's audio track, then asks
   the player for Turkish captions (`tlang=tr`). The player fetches them with its own token;
   youdub keeps a copy of that response. A direct request is the fallback.
 - **Sentences**: caption fragments are merged at punctuation, a pause over 1.2 s, or ~7 s.
+  Auto captions have no punctuation, so youdub adds it (the voice's intonation follows
+  it): a comma where the speaker paused, a "?" after the question particle (mı/mi/mu/mü),
+  a "." at the end. Symbols the voice would read aloud ("Adım 1:" → "iki nokta", `/`,
+  `[Müzik]`) are cleaned up.
+- **English words**: the server respells them the Turkish way ("feedback" → "fidbek") from
+  a table `install.sh` builds once from the CMU Pronouncing Dictionary, with Turkish and
+  English word frequencies deciding which words are English (`server/lexicon.py`, ~24 MB RAM).
 - **Timing**: the next ~20 s of sentences are synthesized ahead. Turkish usually runs
-  longer than English, so a sentence that won't fit is spoken a bit faster by the voice
-  itself (up to 1.25x), then stretched slightly (up to 1.1x, pitch kept), and finally the
-  video slows down for that sentence (down to 0.9x of your chosen speed) and returns to
-  normal right after. Original audio drops to 15% while Turkish plays.
+  longer than English, so a sentence that won't fit is spoken a little faster (up to 1.08x,
+  1.15x when behind; pitch kept), may run up to 1.5 s into the next one, and the video slows
+  down for the rest (down to 0.85x of your chosen speed). Sentences are synthesized two at
+  a time, the one due soonest first, so a seek gets its sentence quickly.
+- Ads: TR waits for the ad to end and stays silent during mid-roll ads.
+- **Ducking**: while Turkish plays, the original audio goes through Web Audio: the speech
+  band (~0.6–3.8 kHz) drops ~36 dB, the rest ~12 dB, so music keeps its bass and highs.
 - Follows pause, play, seek, buffering, speed changes and moving to another video.
 - **TR off / last tab closed** → Chrome closes the host's stdin; the voice exits.
 
@@ -56,4 +67,7 @@ worker console (`chrome://extensions` → youdub → service worker).
 
 Caption URL and PO token approach learned from
 [voice-over-translation](https://github.com/ilyhalight/voice-over-translation) (MIT).
-Icon generated with Codex CLI.
+Logo: `icons/logo.svg` (traced from `icons/logo-original.png`).
+English pronunciations: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict)
+(BSD); word frequencies: [FrequencyWords](https://github.com/hermitdave/FrequencyWords)
+(MIT code, CC-BY-SA-4.0 data).

@@ -4,23 +4,32 @@
 // https://github.com/ilyhalight/voice-over-translation
 (() => {
   const TARGET_LANG = "tr";
-  const DUCK = 0.15; // original audio level while Turkish speech plays
+  // Original audio while Turkish speech plays: the whole track a little quieter, the
+  // speech band much quieter, so the music keeps its bass and highs.
+  const DUCK_GAIN = 0.25; // -12 dB
+  const DUCK_VOICE_DB = -24; // on top of DUCK_GAIN: the voice ends up ~-36 dB
+  const VOICE_BAND_HZ = 1500;
+  const VOICE_BAND_Q = 0.5; // wide: roughly 600 Hz – 3.8 kHz
+  const DUCK_ATTACK = 0.08; // seconds (time constant); quiet down fast
+  const DUCK_RELEASE = 0.5; // come back slowly so gaps don't pump
+  const DUCK_FALLBACK = 0.15; // plain video.volume level when Web Audio is unavailable
   const CHARS_PER_SEC = 14; // rough Turkish speech speed at rate 1
   const MAX_RATE = 1.7; // browser voice only
   const LATE_SKIP = 2.5; // seconds; drop a cue if we reach it this late (browser voice)
-  // Local voice timing. Turkish usually runs longer than the English it replaces, so a
-  // sentence gets a little faster natural speech first (EMA speed), then a small stretch,
-  // and may run into the next one; only a large backlog makes us skip.
+  // Local voice timing. Turkish usually runs longer than the English it replaces. Fast
+  // speech sounds wrong (EMA is already brisk at speed 1), while a slightly slower video is
+  // hard to notice with its own voice ducked, so the voice speeds up only a little and the
+  // video slows down for the rest; only a large backlog makes us skip.
   const EMA_CHARS_PER_SEC = 17.5; // measured: EMA Lightning at speed 1
-  const MAX_SPEED = 1.15; // fastest normal pace (EMA speed × stretch)
-  const CATCH_UP_SPEED = 1.3; // allowed only while we are more than DRIFT_ALLOWANCE behind
+  const MAX_SPEED = 1.08; // fastest normal pace (EMA speed × stretch)
+  const CATCH_UP_SPEED = 1.15; // allowed only while we are more than DRIFT_ALLOWANCE behind
   const EMA_LATE_SKIP = 4;
-  const MIN_VIDEO_RATE = 0.93; // slow the video this far (relative) when Turkish still won't fit
+  const MIN_VIDEO_RATE = 0.85; // slow the video this far (relative) when Turkish still won't fit
   // Speech may run this far behind the video; the backlog closes at the next pause. It is one
   // shared budget: lateness left by earlier sentences is taken out of it, so it can't pile up.
-  const DRIFT_ALLOWANCE = 1.0;
+  const DRIFT_ALLOWANCE = 1.5;
+  const SEEK_JOIN = 1; // after a seek, join a sentence only if it began less than this ago
   const KEEP_DUCKED_GAP = 1.5; // stay quiet across short gaps; music and long pauses come back
-  const RAMP_MS = 250;
   const MERGE_GAP = 0.5; // join neighbouring sentences closer than this for natural flow
   const MERGE_MAX_SECONDS = 10;
   const MERGE_MAX_CHARS = 220;
@@ -32,13 +41,14 @@
     cues: [],
     index: 0,
     voice: null,
-    savedVolume: null,
     timer: 0,
     loading: false,
     engine: "browser",
   };
 
   const getPlayer = () => document.getElementById("movie_player");
+  const adShowing = () => !!getPlayer()?.classList.contains("ad-showing");
+  let inAd = false;
   const getVideo = () =>
     document.querySelector("video.html5-main-video") || document.querySelector("video");
 
@@ -135,13 +145,49 @@
     return url.toString();
   }
 
+  // Captions are written to be read, not heard. Drop sound tags ([Müzik], ♪) and censor
+  // stars, and say slashes the way people do: the voice would read "/" as "eğik çizgi".
+  function speakable(text) {
+    return text
+      .replace(/\[[^\]]*\]|[♪♫]|\p{L}*\*+\p{L}*/gu, " ")
+      .replace(/(\S\.\p{L}{2,})\/\S*/gu, "$1") // a link: keep the site, drop the path
+      .replace(/(?<!\p{L})ve\s*\/\s*veya(?!\p{L})/giu, "veya")
+      .replace(/(\p{L})\s*\/\s*(?=\p{L})/gu, "$1 ya da ") // kullanıcı/müşteri
+      .replace(/\//g, " ") // 7/24 → "yedi yirmi dört"
+      .replace(/(\p{L})-(?=\d)/gu, "$1 ") // GPT-4: not "tire dört"
+      .replace(/:(?=\s|$)/g, ",") // "Adım 1:" is read "iki nokta"; 10:30 has no space and stays a time
+      .replace(/#(?=\d)/g, "") // #1: not "hashtag bir"
+      .replace(/~\s*(?=\d)/g, "yaklaşık ")
+      .replace(/(\d)\s*[x×](?![\p{L}\d])/gu, "$1 kat") // 3x daha hızlı
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // Auto captions have no punctuation, and the voice takes its intonation from it (a "?"
+  // ends high, "," and "." pause), so we add it where the speaker paused or a sentence ends.
+  const COMMA_GAP = 0.25; // seconds of silence between caption lines that read as a comma
+  const ENDS_PUNCTUATED = /[.,!?…:;]["')\]]?$/;
+  // Turkish asks with the particle mı/mi/mu/mü, often with a person ending: "istiyor musun".
+  const ENDS_QUESTION = /(?<!\p{L})(mı|mi|mu|mü)(yım|yim|yum|yüm|sın|sin|sun|sün|yız|yiz|yuz|yüz|sınız|siniz|sunuz|sünüz|dır|dir|dur|dür|ydı|ydi|ydu|ydü|ymış|ymiş|ymuş|ymüş)?$/iu;
+
+  function pause(text) {
+    if (ENDS_PUNCTUATED.test(text)) return text;
+    return text + (ENDS_QUESTION.test(text) ? "?" : ",");
+  }
+
+  function closeSentence(text) {
+    text = text.replace(/,$/, "");
+    if (ENDS_PUNCTUATED.test(text)) return text;
+    return text + (ENDS_QUESTION.test(text) ? "?" : ".");
+  }
+
   // json3 events → lines → speakable cues. A cue ends at sentence punctuation,
   // a pause in speech, or when it gets long (auto captions have no punctuation).
   function buildCues(json) {
     const lines = [];
     for (const event of json.events ?? []) {
       if (!event.segs) continue;
-      const text = event.segs.map((seg) => seg.utf8 ?? "").join("").replace(/\s+/g, " ").trim();
+      const text = speakable(event.segs.map((seg) => seg.utf8 ?? "").join(""));
       if (!text) continue;
       const start = event.tStartMs / 1000;
       lines.push({ start, end: start + (event.dDurationMs ?? 0) / 1000, text });
@@ -152,19 +198,22 @@
     lines.forEach((line, i) => {
       if (!current) current = { start: line.start, end: line.end, text: line.text };
       else {
+        if (line.start - lines[i - 1].end >= COMMA_GAP) current.text = pause(current.text);
         current.text += ` ${line.text}`;
         current.end = Math.max(current.end, line.end);
       }
       const next = lines[i + 1];
       const gap = next ? next.start - line.end : Infinity;
-      const done =
-        /[.!?…]["')\]]?$/.test(current.text) || gap > 1.2 || current.end - current.start >= 7;
+      const sentenceEnd = /[.!?…]["')\]]?$/.test(current.text) || gap > 1.2;
+      const done = sentenceEnd || current.end - current.start >= 7;
       if (done) {
+        // Cut only for length: likely mid-sentence, so keep the voice up with a comma.
+        current.text = sentenceEnd ? closeSentence(current.text) : pause(current.text);
         cues.push(current);
         current = null;
       }
     });
-    if (current) cues.push(current);
+    if (current) cues.push({ ...current, text: closeSentence(current.text) });
 
     // Longer utterances keep the voice's intonation flowing instead of resetting per line.
     const merged = [];
@@ -180,6 +229,7 @@
         last.end = Math.max(last.end, cue.end);
       } else merged.push({ ...cue });
     }
+    for (const cue of merged) cue.text = closeSentence(cue.text);
     return merged;
   }
 
@@ -226,35 +276,52 @@
   speechSynthesis.addEventListener("voiceschanged", pickVoice);
   pickVoice();
 
-  // Fade the original audio instead of cutting it.
-  let rampFrame = 0;
-  function rampVolume(video, target, done) {
-    cancelAnimationFrame(rampFrame);
-    const from = video.volume;
-    const began = performance.now();
-    const step = (now) => {
-      const t = Math.min(1, (now - began) / RAMP_MS);
-      video.volume = Math.min(1, Math.max(0, from + (target - from) * t));
-      if (t < 1) rampFrame = requestAnimationFrame(step);
-      else done?.();
-    };
-    rampFrame = requestAnimationFrame(step);
+  // Duck the original audio through Web Audio, not video.volume: YouTube rewrites
+  // video.volume itself (volume sync, loudness normalization), and a plain volume cut
+  // drops the music with the voice. We cut the speech band hard and the rest gently.
+  // A video can join a graph only once, so its graph is kept for the page's lifetime.
+  const audioGraphs = new WeakMap(); // video -> { gain, voiceBand } | null
+  let audioContext = null;
+  let ducked = false;
+  let savedVolume = 1; // fallback when Web Audio is unavailable
+
+  function audioGraph(video) {
+    if (audioGraphs.has(video)) return audioGraphs.get(video);
+    let graph = null;
+    try {
+      audioContext ??= new AudioContext();
+      const source = audioContext.createMediaElementSource(video);
+      const voiceBand = new BiquadFilterNode(audioContext, { type: "peaking", frequency: VOICE_BAND_HZ, Q: VOICE_BAND_Q });
+      const gain = new GainNode(audioContext);
+      source.connect(voiceBand).connect(gain).connect(audioContext.destination);
+      graph = { gain, voiceBand };
+    } catch (error) {
+      log("web audio unavailable, ducking with video.volume", error); // e.g. another extension took the video
+    }
+    audioGraphs.set(video, graph);
+    return graph;
   }
 
-  function duck(video) {
-    if (state.savedVolume === null) state.savedVolume = video.volume;
-    rampVolume(video, state.savedVolume * DUCK);
+  function setDucked(video, on) {
+    if (ducked === on) return;
+    ducked = on;
+    const graph = audioGraph(video);
+    if (!graph) {
+      if (on) savedVolume = video.volume;
+      video.volume = on ? savedVolume * DUCK_FALLBACK : savedVolume;
+      return;
+    }
+    audioContext.resume();
+    const now = audioContext.currentTime;
+    const smoothing = on ? DUCK_ATTACK : DUCK_RELEASE;
+    graph.gain.gain.setTargetAtTime(on ? DUCK_GAIN : 1, now, smoothing);
+    graph.voiceBand.gain.setTargetAtTime(on ? DUCK_VOICE_DB : 0, now, smoothing);
   }
 
-  function unduck(video) {
-    if (state.savedVolume === null) return;
-    const target = state.savedVolume;
-    state.savedVolume = null;
-    rampVolume(video, target);
-  }
+  const duck = (video) => setDucked(video, true);
+  const unduck = (video) => setDucked(video, false);
 
   // Local EMA Lightning voice (server/run.sh). Falls back to the browser's voice.
-  const TTS_URL = "http://127.0.0.1:7845";
   const PREFETCH_AHEAD = 20; // seconds of upcoming sentences to synthesize early
   const audioCache = new Map(); // cue index -> Promise<{ url, duration } | null>
   let current = null; // the <audio> playing now (EMA engine)
@@ -288,13 +355,31 @@
     window.postMessage({ source: "youdub-page", type: "stop" }, "*");
   }
 
-  // The first local request can take a few seconds (Chrome's local network check).
+  // Requests to the local voice go through the extension: browsers block this page from
+  // reaching 127.0.0.1 itself. Resolves to the response body (ArrayBuffer) or null, also
+  // when no answer comes (e.g. the extension was reloaded under this tab).
+  let voiceRequestId = 0;
+  function voiceRequest(path, body, timeout = 30000) {
+    const id = (voiceRequestId += 1);
+    return new Promise((resolve) => {
+      const done = (data) => {
+        window.removeEventListener("message", onMessage);
+        clearTimeout(timer);
+        resolve(data);
+      };
+      const onMessage = (event) => {
+        if (event.source !== window || event.data?.source !== "youdub-ext") return;
+        if (event.data.type === "voice" && event.data.id === id) done(event.data.data ?? null);
+      };
+      const timer = setTimeout(() => done(null), timeout + 2000);
+      window.addEventListener("message", onMessage);
+      window.postMessage({ source: "youdub-page", type: "voice", id, path, body, timeout }, "*");
+    });
+  }
+
   async function serverUp() {
     for (const timeout of [4000, 2000]) {
-      try {
-        const response = await pageFetch(`${TTS_URL}/health`, { signal: AbortSignal.timeout(timeout) });
-        if (response.ok) return true;
-      } catch {}
+      if (await voiceRequest("/health", null, timeout)) return true;
     }
     return false;
   }
@@ -308,32 +393,70 @@
     return Math.round(Math.min(MAX_SPEED, Math.max(1, needed / slot)) * 100) / 100;
   }
 
+  // Sentences are synthesized two at a time, the one needed soonest first. Sending all of
+  // the prefetch window at once (start, every seek) left the sentence due now at the back
+  // of the queue: it came late, then had to rush or was skipped.
+  const MAX_IN_FLIGHT = 2;
+  const queued = new Map(); // cue index -> { promise, resolve }, not sent yet
+  let inFlight = 0;
+
   function synth(index) {
     if (!audioCache.has(index)) {
-      const request = pageFetch(`${TTS_URL}/speak`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: state.cues[index].text, speed: plannedSpeed(index) }),
-      })
-        .then((response) => (response.ok ? response.blob() : null))
-        .then(
-          (blob) =>
-            blob &&
-            new Promise((resolve) => {
-              const url = URL.createObjectURL(blob);
-              const probe = new Audio(url);
-              probe.addEventListener(
-                "loadedmetadata",
-                () => resolve({ url, duration: probe.duration, speed: plannedSpeed(index) }),
-                { once: true },
-              );
-              probe.addEventListener("error", () => resolve(null), { once: true });
-            }),
-        )
-        .catch(() => null);
-      audioCache.set(index, request);
+      let resolve;
+      const promise = new Promise((r) => (resolve = r));
+      audioCache.set(index, promise);
+      queued.set(index, { promise, resolve });
+      pumpSynth();
     }
     return audioCache.get(index);
+  }
+
+  function pumpSynth() {
+    while (inFlight < MAX_IN_FLIGHT && queued.size) {
+      const index = Math.min(...queued.keys());
+      const { promise, resolve } = queued.get(index);
+      queued.delete(index);
+      inFlight += 1;
+      requestClip(index).then((clip) => {
+        inFlight -= 1;
+        if (audioCache.get(index) !== promise) {
+          if (clip) URL.revokeObjectURL(clip.url); // cache was cleared meanwhile (new video)
+        } else if (!clip) {
+          audioCache.delete(index); // failed: ask again next time instead of staying silent
+        }
+        resolve(clip);
+        pumpSynth();
+      });
+    }
+  }
+
+  // After a seek the queued sentences may be far from where we are now.
+  function dropQueued() {
+    for (const [index, { resolve }] of queued) {
+      audioCache.delete(index);
+      resolve(null);
+    }
+    queued.clear();
+  }
+
+  function requestClip(index) {
+    return voiceRequest("/speak", { text: state.cues[index].text, speed: plannedSpeed(index) })
+      .then((data) => data && new Blob([data], { type: "audio/wav" }))
+      .then(
+        (blob) =>
+          blob &&
+          new Promise((resolve) => {
+            const url = URL.createObjectURL(blob);
+            const probe = new Audio(url);
+            probe.addEventListener(
+              "loadedmetadata",
+              () => resolve({ url, duration: probe.duration, speed: plannedSpeed(index) }),
+              { once: true },
+            );
+            probe.addEventListener("error", () => resolve(null), { once: true });
+          }),
+      )
+      .catch(() => null);
   }
 
   function prefetch(time) {
@@ -341,6 +464,7 @@
   }
 
   function clearAudioCache() {
+    dropQueued();
     for (const request of audioCache.values()) request.then((clip) => clip && URL.revokeObjectURL(clip.url));
     audioCache.clear();
   }
@@ -415,20 +539,35 @@
 
   const speaking = () => (state.engine === "ema" ? busy : speechSynthesis.speaking);
 
+  // Landing inside a sentence: start with it only if it has just begun. Joining it seconds
+  // late meant rushing to catch up; the next sentence comes soon anyway.
   function resetIndex(time) {
-    const i = state.cues.findIndex((cue) => cue.end > time);
+    const i = state.cues.findIndex((cue) => cue.start >= time - SEEK_JOIN);
     state.index = i === -1 ? state.cues.length : i;
   }
 
   function tick() {
     const video = getVideo();
     if (!video || !state.cues.length || video.paused) return;
+    // During an ad the same <video> plays the ad, so its time means nothing to our cues.
+    if (adShowing()) {
+      if (!inAd) {
+        inAd = true;
+        stopSpeech();
+        dropQueued();
+      }
+      return;
+    }
+    if (inAd) {
+      inAd = false;
+      resetIndex(video.currentTime);
+    }
     const time = video.currentTime;
     if (state.engine === "ema") prefetch(time);
 
     // Bring the original audio back only for real gaps (music, long pauses).
     const upcoming = state.cues[state.index];
-    if (!speaking() && state.savedVolume !== null && (!upcoming || upcoming.start - time > KEEP_DUCKED_GAP)) {
+    if (!speaking() && ducked && (!upcoming || upcoming.start - time > KEEP_DUCKED_GAP)) {
       unduck(video);
     }
 
@@ -468,6 +607,10 @@
     state.loading = true;
     toast("Türkçe ses hazırlanıyor…");
     try {
+      // The player can't give captions during an ad; wait for the video itself.
+      if (adShowing()) toast("Reklam bitince Türkçe ses başlayacak.");
+      while (adShowing() && state.on) await wait(500);
+      if (!state.on) return;
       if (state.videoId !== videoId || !state.cues.length) {
         state.cues = await loadCues(videoId);
         state.videoId = videoId;
@@ -504,10 +647,14 @@
     const button = document.getElementById("youdub-toggle");
     if (button) {
       button.setAttribute("aria-pressed", String(on));
-      button.style.opacity = on ? "1" : "0.6";
+      paintButton(button);
     }
-    if (on) start();
-    else {
+    if (on) {
+      // Build the audio graph inside the click, where the browser lets audio start.
+      const video = getVideo();
+      if (video && audioGraph(video)) audioContext.resume();
+      start();
+    } else {
       stop();
     }
   }
@@ -545,32 +692,64 @@
     }, 3500);
   }
 
+  // icons/logo.svg, built with DOM calls because YouTube enforces Trusted Types.
+  const LOGO_PATH =
+    "M2360 9913 c-275 -21 -647 -139 -794 -252 -28 -21 -74 -50 -103 -65 -273 -137 -674 -637 -786 -981 -60 -183 -107 -380 -107 -450 -1 -38 -6 -101 -11 -140 -5 -38 -14 -252 -19 -475 -4 -223 -13 -425 -19 -450 -39 -171 -6 -733 64 -1074 19 -91 222 -507 284 -581 23 -27 83 -101 133 -163 185 -229 579 -492 848 -567 52 -15 121 -35 154 -46 32 -10 115 -25 185 -33 69 -9 169 -21 221 -28 127 -16 1150 -24 1202 -8 20 6 63 30 95 54 32 24 81 55 109 69 28 14 80 49 115 78 35 28 123 80 194 116 72 36 149 78 171 94 23 15 72 43 109 60 72 35 151 104 181 160 18 32 19 87 25 1244 4 935 8 1221 18 1258 62 232 312 262 593 71 59 -41 148 -94 198 -119 50 -25 140 -79 200 -120 304 -207 416 -232 552 -123 35 27 88 63 119 79 31 15 85 51 120 79 35 29 125 83 200 120 75 38 165 92 200 120 35 29 127 84 204 122 79 40 166 92 199 120 33 27 85 62 116 78 266 134 376 424 292 770 -17 69 -34 141 -37 160 -35 186 -222 450 -415 586 -185 130 -290 176 -530 235 -32 8 -4179 10 -4280 2z M7865 8246 c-48 -21 -235 -144 -305 -201 -63 -51 -157 -110 -324 -201 -43 -24 -103 -63 -133 -88 -30 -25 -119 -79 -197 -120 -79 -42 -170 -96 -202 -122 -32 -25 -81 -57 -109 -71 -27 -14 -81 -47 -120 -73 -38 -26 -89 -59 -113 -74 -104 -65 -85 -108 97 -219 75 -46 203 -126 284 -178 154 -98 202 -127 351 -213 369 -211 361 -499 -18 -688 -33 -16 -92 -54 -131 -82 -38 -29 -164 -101 -280 -160 -115 -59 -241 -131 -280 -160 -38 -29 -164 -101 -280 -160 -115 -59 -241 -131 -280 -160 -38 -29 -164 -101 -280 -160 -115 -59 -242 -132 -280 -161 -243 -185 -402 -204 -595 -71 -90 62 -116 61 -206 -10 -32 -25 -90 -62 -129 -81 -503 -253 -698 -521 -626 -858 44 -205 304 -506 543 -626 212 -107 137 -103 2088 -109 1775 -5 1775 -5 1817 -27 162 -87 422 -275 822 -595 208 -168 299 -240 381 -304 47 -37 119 -97 160 -134 195 -173 261 -212 364 -213 224 -2 270 225 146 728 -11 44 -27 136 -35 205 -9 69 -25 161 -37 205 -30 117 -32 145 -10 181 23 36 144 102 243 132 90 28 264 116 319 161 25 21 74 57 110 81 168 113 450 441 498 580 11 30 47 114 81 185 137 288 153 440 147 1424 -6 1051 -33 1226 -247 1577 -20 33 -51 88 -70 123 -37 71 -173 220 -314 343 -87 77 -489 298 -541 298 -9 0 -68 17 -132 39 -187 62 -2054 111 -2177 57z";
+  const LOGO_RED = "#EF1B37";
+  function logoIcon() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    // Sized like YouTube's own icons (24x24 attributes, the player's CSS does the rest);
+    // the viewBox frames the logo with the same margin their glyphs have.
+    svg.setAttribute("viewBox", "-47 -48 1280 1280");
+    svg.setAttribute("width", "24");
+    svg.setAttribute("height", "24");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("transform", "translate(0 1184) scale(0.1 -0.1)");
+    path.setAttribute("d", LOGO_PATH);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  // White like the other player buttons while off, the logo's red while on.
+  function paintButton(button) {
+    const path = button.querySelector("path");
+    if (path) path.setAttribute("fill", state.on ? LOGO_RED : "#fff");
+  }
+
   function mountButton() {
-    const controls = document.querySelector(".ytp-right-controls");
+    // Newer players group the right-hand buttons in pills; join the first one.
+    const controls = document.querySelector(".ytp-right-controls-left") ?? document.querySelector(".ytp-right-controls");
     if (!controls || document.getElementById("youdub-toggle")) return;
     const button = document.createElement("button");
     button.id = "youdub-toggle";
     button.className = "ytp-button";
     button.title = "Türkçe seslendirme (youdub)";
+    button.setAttribute("aria-label", button.title);
     button.setAttribute("aria-pressed", String(state.on));
-    button.textContent = "TR";
-    Object.assign(button.style, {
-      font: "700 13px Roboto, Arial, sans-serif",
-      color: "#fff",
-      textAlign: "center",
-      opacity: state.on ? "1" : "0.6",
-    });
+    button.appendChild(logoIcon());
+    paintButton(button);
     button.addEventListener("click", () => setOn(!state.on));
     controls.prepend(button);
   }
 
   // --- wiring ---------------------------------------------------------------
 
+  // Seeking: stop the sentence at once (dragging the bar fires many of these), then pick up
+  // at the new position with only the sentences that are near it.
+  document.addEventListener(
+    "seeking",
+    (event) => {
+      if (state.on && event.target === getVideo()) stopSpeech();
+    },
+    true,
+  );
   document.addEventListener(
     "seeked",
     (event) => {
       if (!state.on || event.target !== getVideo()) return;
       stopSpeech();
+      dropQueued();
       resetIndex(event.target.currentTime);
     },
     true,

@@ -16,5 +16,20 @@ window.addEventListener("message", (event) => {
   } else if (event.data.type === "stop") {
     port?.disconnect();
     port = null;
+  } else if (event.data.type === "voice") {
+    // A request for the local voice; background.js makes it (pages can't reach 127.0.0.1).
+    const { id, path, body, timeout } = event.data;
+    let request;
+    try {
+      request = chrome.runtime.sendMessage({ type: "voice", path, body, timeout });
+    } catch {
+      request = Promise.resolve(null); // extension reloaded: this tab needs a refresh
+    }
+    request
+      .catch(() => null)
+      .then((reply) => {
+        const data = reply && Uint8Array.from(atob(reply.data), (c) => c.charCodeAt(0)).buffer;
+        window.postMessage({ source: "youdub-ext", type: "voice", id, data }, "*", data ? [data] : []);
+      });
   }
 });

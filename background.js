@@ -46,3 +46,32 @@ chrome.runtime.onConnect.addListener((port) => {
     stopHostIfIdle();
   });
 });
+
+// Browsers block YouTube pages from reaching 127.0.0.1, so the page's voice requests come
+// here through bridge.js. Messages are JSON, so the audio travels base64-encoded.
+const VOICE_URL = "http://127.0.0.1:7845";
+const VOICE_PATHS = new Set(["/health", "/speak"]);
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "voice" || !VOICE_PATHS.has(message.path)) return;
+  voiceRequest(message).then(sendResponse, () => sendResponse(null));
+  return true; // answer asynchronously
+});
+
+// Always POST: the browser leaves the Origin header (which the server checks) off a GET.
+async function voiceRequest({ path, body, timeout }) {
+  const response = await fetch(VOICE_URL + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!response.ok) return null;
+  return { data: toBase64(new Uint8Array(await response.arrayBuffer())) };
+}
+
+function toBase64(bytes) {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+}

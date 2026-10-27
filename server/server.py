@@ -1,36 +1,47 @@
 """Local Turkish TTS helper for youdub, backed by EMA Lightning.
 
-Listens on 127.0.0.1 only and answers requests whose Origin is YouTube, so other
-websites and other machines on the network cannot use it.
+Listens on 127.0.0.1 only and answers only the youdub extension (by its Origin), so
+websites and other machines on the network cannot use it. Browsers block YouTube pages
+from reaching local addresses, so the extension's service worker makes the requests.
 
   POST /speak  {"text": "...", "speed": 1.0}  ->  audio/wav
-  GET  /health                                ->  {"ok": true}
+  POST /health                                ->  {"ok": true}
+
+Both are POST because the browser leaves the Origin header off an extension's GET.
 """
 
 import io
 import json
 import logging
+import threading
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 from ema_lightning import EMA
 
+import lexicon
+
 HOST = "127.0.0.1"
 PORT = 7845
-ALLOWED_ORIGINS = {"https://www.youtube.com", "https://m.youtube.com"}
+ALLOWED_ORIGINS = {"chrome-extension://eadpkhjldhfpfdaaabibjmijjmgnefdk"}  # fixed by manifest.json "key"
 MAX_CHARS = 600
 
 log = logging.getLogger("youdub")
 tts = None
+english = {}  # English words -> Turkish respelling (lexicon.py)
+speaking = threading.Lock()  # one sentence at a time: requests arrive in parallel
 
 
 def load():
     """Load the model once. On an Apple M3 the CPU was ~22x faster than real time; MPS was slower."""
-    global tts
+    global tts, english
     if tts is None:
         tts = EMA(device="cpu")
         tts.say("Hazır.")  # warm-up
+        english = lexicon.load()
+        if not english:
+            log.warning("no %s; English words will be read the Turkish way (run install.sh)", lexicon.TABLE)
 
 
 def to_wav(audio, sample_rate):
@@ -56,8 +67,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        # Chrome asks before a public site may reach a local address.
-        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Vary", "Origin")
 
     def reply(self, status, body=b"", content_type="application/json"):
@@ -73,18 +82,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.reply(204 if self.origin() else 403)
 
-    def do_GET(self):
-        if self.path != "/health":
-            return self.reply(404)
-        if not self.origin():
-            return self.reply(403)
-        self.reply(200, b'{"ok": true}')
-
     def do_POST(self):
-        if self.path != "/speak":
+        if self.path not in ("/speak", "/health"):
             return self.reply(404)
         if not self.origin():
             return self.reply(403)
+        if self.path == "/health":
+            return self.reply(200, b'{"ok": true}')
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(min(length, 16_384)) or b"{}")
@@ -95,7 +99,8 @@ class Handler(BaseHTTPRequestHandler):
         if not text:
             return self.reply(400)
 
-        speech = tts.say(text, speed=speed, seed=0)
+        with speaking:
+            speech = tts.say(lexicon.respell(text, english), speed=speed, seed=0)
         log.info("%.2fs  %s", speech.duration, text[:70])
         self.reply(200, to_wav(speech.audio, speech.sample_rate), "audio/wav")
 
