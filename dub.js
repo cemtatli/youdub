@@ -6,8 +6,15 @@
   const TARGET_LANG = "tr";
   const DUCK = 0.15; // original audio level while Turkish speech plays
   const CHARS_PER_SEC = 14; // rough Turkish speech speed at rate 1
-  const MAX_RATE = 1.7;
-  const LATE_SKIP = 2.5; // seconds; drop a cue if we reach it this late
+  const MAX_RATE = 1.7; // browser voice only
+  const LATE_SKIP = 2.5; // seconds; drop a cue if we reach it this late (browser voice)
+  // Local voice timing. Turkish usually runs longer than the English it replaces, so a
+  // sentence gets a little faster natural speech first (EMA speed), then a small stretch,
+  // and may run into the next one; only a large backlog makes us skip.
+  const EMA_CHARS_PER_SEC = 17.5; // measured: EMA Lightning at speed 1
+  const MAX_SPEED = 1.25; // EMA speed when synthesizing
+  const MAX_STRETCH = 1.1; // extra playbackRate at play time
+  const EMA_LATE_SKIP = 4;
   const log = (...args) => console.debug("[yt-dub]", ...args);
 
   const state = {
@@ -225,12 +232,21 @@
     return false;
   }
 
+  // Speak faster only as much as the sentence needs to fit before the next one starts.
+  function plannedSpeed(index) {
+    const cue = state.cues[index];
+    const next = state.cues[index + 1];
+    const slot = Math.max(0.8, (next ? next.start : cue.end + 1.5) - cue.start);
+    const needed = cue.text.length / EMA_CHARS_PER_SEC;
+    return Math.round(Math.min(MAX_SPEED, Math.max(1, needed / slot)) * 100) / 100;
+  }
+
   function synth(index) {
     if (!audioCache.has(index)) {
       const request = pageFetch(`${TTS_URL}/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: state.cues[index].text }),
+        body: JSON.stringify({ text: state.cues[index].text, speed: plannedSpeed(index) }),
       })
         .then((response) => (response.ok ? response.blob() : null))
         .then(
@@ -279,9 +295,9 @@
     busy = true;
     synth(index).then((clip) => {
       if (ticket !== generation) return;
-      if (!clip || video.currentTime - cue.start > LATE_SKIP) return finish(video);
+      if (!clip || video.currentTime - cue.start > EMA_LATE_SKIP) return finish(video);
       const audio = new Audio(clip.url);
-      const stretch = Math.min(MAX_RATE, Math.max(1, clip.duration / slotFor(cue, next, video)));
+      const stretch = Math.min(MAX_STRETCH, Math.max(1, clip.duration / slotFor(cue, next, video)));
       audio.playbackRate = stretch * video.playbackRate; // pitch is preserved by default
       audio.addEventListener("ended", () => finish(video), { once: true });
       audio.addEventListener("error", () => finish(video), { once: true });
@@ -325,7 +341,7 @@
     while (state.index < state.cues.length) {
       const cue = state.cues[state.index];
       if (time < cue.start) return;
-      if (time - cue.start > LATE_SKIP) {
+      if (time - cue.start > (state.engine === "ema" ? EMA_LATE_SKIP : LATE_SKIP)) {
         state.index += 1; // fell behind; skip rather than drift
         continue;
       }
@@ -463,6 +479,21 @@
       if (!state.on || event.target !== getVideo()) return;
       speechSynthesis.pause();
       current?.pause();
+    },
+    true,
+  );
+  // Buffering: the video stops but its "paused" flag stays false.
+  document.addEventListener(
+    "waiting",
+    (event) => {
+      if (state.on && event.target === getVideo()) current?.pause();
+    },
+    true,
+  );
+  document.addEventListener(
+    "playing",
+    (event) => {
+      if (state.on && event.target === getVideo()) current?.play().catch(() => {});
     },
     true,
   );
