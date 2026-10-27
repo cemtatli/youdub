@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "yt-dub",
+  "version": "0.1.0",
+  "description": "Speaks YouTube captions in Turkish while you watch.",
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["dub.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    }
+  ]
+}
