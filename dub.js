@@ -12,10 +12,18 @@
   // sentence gets a little faster natural speech first (EMA speed), then a small stretch,
   // and may run into the next one; only a large backlog makes us skip.
   const EMA_CHARS_PER_SEC = 17.5; // measured: EMA Lightning at speed 1
-  const MAX_SPEED = 1.25; // EMA speed when synthesizing
-  const MAX_STRETCH = 1.1; // extra playbackRate at play time
+  const MAX_SPEED = 1.15; // fastest normal pace (EMA speed × stretch)
+  const CATCH_UP_SPEED = 1.3; // allowed only while we are more than DRIFT_ALLOWANCE behind
   const EMA_LATE_SKIP = 4;
-  const MIN_VIDEO_RATE = 0.9; // slow the video this far (relative) when Turkish still won't fit
+  const MIN_VIDEO_RATE = 0.93; // slow the video this far (relative) when Turkish still won't fit
+  // Speech may run this far behind the video; the backlog closes at the next pause. It is one
+  // shared budget: lateness left by earlier sentences is taken out of it, so it can't pile up.
+  const DRIFT_ALLOWANCE = 1.0;
+  const KEEP_DUCKED_GAP = 1.5; // stay quiet across short gaps; music and long pauses come back
+  const RAMP_MS = 250;
+  const MERGE_GAP = 0.5; // join neighbouring sentences closer than this for natural flow
+  const MERGE_MAX_SECONDS = 10;
+  const MERGE_MAX_CHARS = 220;
   const log = (...args) => console.debug("[youdub]", ...args);
 
   const state = {
@@ -157,7 +165,22 @@
       }
     });
     if (current) cues.push(current);
-    return cues;
+
+    // Longer utterances keep the voice's intonation flowing instead of resetting per line.
+    const merged = [];
+    for (const cue of cues) {
+      const last = merged[merged.length - 1];
+      if (
+        last &&
+        cue.start - last.end < MERGE_GAP &&
+        cue.end - last.start <= MERGE_MAX_SECONDS &&
+        last.text.length + cue.text.length < MERGE_MAX_CHARS
+      ) {
+        last.text += ` ${cue.text}`;
+        last.end = Math.max(last.end, cue.end);
+      } else merged.push({ ...cue });
+    }
+    return merged;
   }
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -203,15 +226,31 @@
   speechSynthesis.addEventListener("voiceschanged", pickVoice);
   pickVoice();
 
+  // Fade the original audio instead of cutting it.
+  let rampFrame = 0;
+  function rampVolume(video, target, done) {
+    cancelAnimationFrame(rampFrame);
+    const from = video.volume;
+    const began = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - began) / RAMP_MS);
+      video.volume = Math.min(1, Math.max(0, from + (target - from) * t));
+      if (t < 1) rampFrame = requestAnimationFrame(step);
+      else done?.();
+    };
+    rampFrame = requestAnimationFrame(step);
+  }
+
   function duck(video) {
     if (state.savedVolume === null) state.savedVolume = video.volume;
-    video.volume = state.savedVolume * DUCK;
+    rampVolume(video, state.savedVolume * DUCK);
   }
 
   function unduck(video) {
     if (state.savedVolume === null) return;
-    video.volume = state.savedVolume;
+    const target = state.savedVolume;
     state.savedVolume = null;
+    rampVolume(video, target);
   }
 
   // Local EMA Lightning voice (server/run.sh). Falls back to the browser's voice.
@@ -264,7 +303,7 @@
   function plannedSpeed(index) {
     const cue = state.cues[index];
     const next = state.cues[index + 1];
-    const slot = Math.max(0.8, (next ? next.start : cue.end + 1.5) - cue.start);
+    const slot = Math.max(0.8, (next ? next.start : cue.end + 1.5) - cue.start) + DRIFT_ALLOWANCE;
     const needed = cue.text.length / EMA_CHARS_PER_SEC;
     return Math.round(Math.min(MAX_SPEED, Math.max(1, needed / slot)) * 100) / 100;
   }
@@ -283,7 +322,11 @@
             new Promise((resolve) => {
               const url = URL.createObjectURL(blob);
               const probe = new Audio(url);
-              probe.addEventListener("loadedmetadata", () => resolve({ url, duration: probe.duration }), { once: true });
+              probe.addEventListener(
+                "loadedmetadata",
+                () => resolve({ url, duration: probe.duration, speed: plannedSpeed(index) }),
+                { once: true },
+              );
               probe.addEventListener("error", () => resolve(null), { once: true });
             }),
         )
@@ -325,10 +368,7 @@
   function finish(video) {
     busy = false;
     current = null;
-    restoreRate(video);
-    setTimeout(() => {
-      if (!busy) unduck(video);
-    }, 300);
+    restoreRate(video); // the original audio comes back in tick() if no sentence follows soon
   }
 
   function speakEma(index, video) {
@@ -340,8 +380,10 @@
       if (ticket !== generation) return;
       if (!clip || video.currentTime - cue.start > EMA_LATE_SKIP) return finish(video);
       const audio = new Audio(clip.url);
-      const room = slotFor(cue, next, video); // video seconds until the next sentence
-      const stretch = Math.min(MAX_STRETCH, Math.max(1, clip.duration / room));
+      const room = slotFor(cue, next, video) + DRIFT_ALLOWANCE; // video seconds it may take
+      const behind = video.currentTime - cue.start > DRIFT_ALLOWANCE;
+      const maxStretch = (behind ? CATCH_UP_SPEED : MAX_SPEED) / clip.speed;
+      const stretch = Math.min(Math.max(1, maxStretch), Math.max(1, clip.duration / room));
       audio.playbackRate = stretch * baseRate; // pitch is preserved by default
       // Still too long: slow the video a little for this sentence so the next one waits.
       const slow = Math.max(MIN_VIDEO_RATE, Math.min(1, (room * stretch) / clip.duration));
@@ -367,11 +409,7 @@
     if (state.voice) utterance.voice = state.voice;
     utterance.rate = rate;
     utterance.onstart = () => duck(video);
-    utterance.onend = () => {
-      setTimeout(() => {
-        if (!speechSynthesis.speaking) unduck(video);
-      }, 300);
-    };
+
     speechSynthesis.speak(utterance);
   }
 
@@ -387,6 +425,12 @@
     if (!video || !state.cues.length || video.paused) return;
     const time = video.currentTime;
     if (state.engine === "ema") prefetch(time);
+
+    // Bring the original audio back only for real gaps (music, long pauses).
+    const upcoming = state.cues[state.index];
+    if (!speaking() && state.savedVolume !== null && (!upcoming || upcoming.start - time > KEEP_DUCKED_GAP)) {
+      unduck(video);
+    }
 
     while (state.index < state.cues.length) {
       const cue = state.cues[state.index];
