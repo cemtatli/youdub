@@ -2,14 +2,17 @@
 // - Watch later: one click adds / removes the video. Runs in the page (MAIN world) so it can
 //   use YouTube's own InnerTube API with the signed-in session, like the "Save" menu does.
 // - Minimal mode: hides the recommendations column; remembered across videos. Chapters,
-//   when the video has them, open in its place.
+//   when the video has them, open in its place, under a compact "Ask" (Gemini) button that
+//   stands in for the description's Ask card.
 (() => {
   const PLAYLIST_ID = "WL";
   const log = (...args) => console.debug("[youdub:wl]", ...args);
 
   const MINIMAL_KEY = "youdub-minimal";
-  const CHAPTERS = 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"]';
+  const CHAPTERS_ID = '[target-id="engagement-panel-macro-markers-description-chapters"]';
+  const CHAPTERS = `ytd-engagement-panel-section-list-renderer${CHAPTERS_ID}`;
   const EXPANDED = "ENGAGEMENT_PANEL_VISIBILITY_EXPANDED";
+  const ASK = "yt-video-description-youchat-section-view-model"; // "Soru" card in the description
   const state = { videoId: null, saved: false, busy: false, minimal: false, chaptersFor: null };
 
   const getPlayer = () => document.getElementById("movie_player");
@@ -235,12 +238,65 @@
     panel.setAttribute("visibility", EXPANDED);
   }
 
+  // A compact Ask button at the top of the right column. It presses the description's own
+  // "Soru sorun" button, so YouTube opens its Gemini panel as usual.
+  function sparkIcon() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "20");
+    svg.setAttribute("height", "20");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M12 3c.5 4.6 3.4 7.5 9 9-5.6 1.5-8.5 4.4-9 9-.5-4.6-3.4-7.5-9-9 5.6-1.5 8.5-4.4 9-9z");
+    path.setAttribute("fill", "currentColor");
+    svg.appendChild(path);
+    return svg;
+  }
+
+  // Keeps --youdub-player-height in step with the player.
+  const playerSize = new ResizeObserver(([entry]) => {
+    document.documentElement.style.setProperty("--youdub-player-height", `${Math.round(entry.contentRect.height)}px`);
+  });
+  let observedPlayer = null;
+  function watchPlayerSize() {
+    const player = getPlayer();
+    if (!player || player === observedPlayer) return;
+    if (observedPlayer) playerSize.unobserve(observedPlayer);
+    playerSize.observe(player);
+    observedPlayer = player;
+  }
+
+  const askSource = () => document.querySelector(`ytd-watch-metadata ${ASK} button`);
+
+  function placeAsk() {
+    watchPlayerSize();
+    const column = document.querySelector("ytd-watch-flexy #secondary-inner") ?? document.querySelector("ytd-watch-flexy #secondary");
+    if (!column) return;
+    let button = document.getElementById("youdub-ask");
+    if (!button) {
+      button = document.createElement("button");
+      button.id = "youdub-ask";
+      const label = document.createElement("span");
+      label.textContent = "Bu video hakkında soru sor";
+      button.append(sparkIcon(), label);
+      button.addEventListener("click", () => askSource()?.click());
+      column.prepend(button);
+    }
+    const available = !!askSource();
+    if (button.hidden === available) button.hidden = !available;
+  }
+
   function setMinimal(on) {
     state.minimal = on;
     state.chaptersFor = null;
-    const chapters = document.querySelector(CHAPTERS);
+    placeAsk();
     if (on) openChapters();
-    else if (chapters?.getAttribute("visibility") === EXPANDED) chapters.setAttribute("visibility", "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
+    else {
+      // Back to the normal page: close chapters, Gemini and any other side panel.
+      for (const panel of document.querySelectorAll(`ytd-watch-flexy #secondary [visibility="${EXPANDED}"]`)) {
+        panel.setAttribute("visibility", "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
+      }
+    }
     document.documentElement.classList.toggle("youdub-minimal", on);
     try {
       localStorage.setItem(MINIMAL_KEY, on ? "1" : "0");
@@ -270,10 +326,32 @@
     }
     .youdub-row-wrap:hover .youdub-row-tip { opacity: 1; transition-delay: 0.3s; }
     html.youdub-minimal ytd-watch-flexy #secondary #related { display: none !important; }
-    html.youdub-minimal ytd-watch-flexy:not([theater]):not([fullscreen]):not(:has(#secondary [visibility="${EXPANDED}"])) #secondary {
+    #youdub-ask {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; height: 40px; margin: 0 0 12px; padding: 0 16px; border: 0; border-radius: 20px;
+      background: var(--yt-spec-badge-chip-background, rgba(255,255,255,0.1));
+      color: var(--yt-spec-text-primary, #fff); font: 500 14px/20px Roboto, Arial, sans-serif;
+      cursor: pointer;
+    }
+    #youdub-ask:hover { background: var(--yt-spec-button-chip-background-hover, rgba(255,255,255,0.2)); }
+    #youdub-ask[hidden], html:not(.youdub-minimal) #youdub-ask { display: none; }
+    html.youdub-minimal ytd-watch-metadata ${ASK} { display: none; }
+    /* Gemini (or any other panel) open: it gets the whole column. */
+    html.youdub-minimal #secondary:has([visibility="${EXPANDED}"]:not(${CHAPTERS_ID})) :is(#youdub-ask, ${CHAPTERS_ID}) {
       display: none !important;
     }
-    html.youdub-minimal ytd-watch-flexy:not([theater]):not([fullscreen]):not(:has(#secondary [visibility="${EXPANDED}"])) #primary {
+    /* The column ends with the player: YouTube sizes panels for the narrower two-column
+       player, so use the real player height (--youdub-player-height, set from JS). */
+    html.youdub-minimal #secondary [visibility="${EXPANDED}"] {
+      max-height: var(--youdub-player-height, var(--ytd-watch-flexy-panel-max-height)) !important;
+    }
+    html.youdub-minimal #secondary:has(#youdub-ask:not([hidden])) ${CHAPTERS_ID} {
+      max-height: calc(var(--youdub-player-height, var(--ytd-watch-flexy-panel-max-height)) - 52px) !important;
+    }
+    html.youdub-minimal ytd-watch-flexy:not([theater]):not([fullscreen]):not(:has(#secondary [visibility="${EXPANDED}"])):not(:has(#youdub-ask:not([hidden]))) #secondary {
+      display: none !important;
+    }
+    html.youdub-minimal ytd-watch-flexy:not([theater]):not([fullscreen]):not(:has(#secondary [visibility="${EXPANDED}"])):not(:has(#youdub-ask:not([hidden]))) #primary {
       max-width: var(--ytd-watch-flexy-max-player-width) !important;
       margin-inline: auto !important;
       padding-right: 0 !important;
@@ -319,6 +397,7 @@
     if (!menu) return;
     dropMenuItems(menu); // YouTube re-renders the row per video, so check every time
     openChapters(); // chapters arrive after the row
+    placeAsk();
     if (document.getElementById("youdub-watchlater")) return;
     const more = menu.querySelector(":scope > #button-shape");
     if (!more?.querySelector("button")) return;

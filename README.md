@@ -58,8 +58,10 @@ and Ask buttons are removed from that row and its "..." menu):
 
 - **Watch later** (clock): one click adds the video to Watch later, again removes it. Uses
   YouTube's InnerTube API with your signed-in session (`browse/edit_playlist`).
-- **Minimal mode** (window icon): hides the recommendations. If the video has chapters they
-  open in the right column instead; otherwise the video is centred. Remembered across videos.
+- **Minimal mode** (window icon): hides the recommendations. The right column shows a compact
+  "Ask" button (presses the description's own Gemini "Ask" button) above the chapters, if
+  the video has them; an open panel such as Gemini takes the whole column. With nothing to
+  show, the video is centred. Turning it off closes the side panels. Remembered across videos.
 
 ## Debugging
 
