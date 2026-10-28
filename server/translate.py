@@ -7,6 +7,7 @@ time, as long as it is nearly as likely as the best.
 
 Model: Helsinki-NLP/opus-mt-tc-big-en-tr (CC-BY-4.0), converted by install.sh into
 models/opus-mt-en-tr. Without it, /translate is off and youdub uses YouTube's translation.
+It runs in worker.py's child process, never in the server itself (see there why).
 """
 
 import re
@@ -57,15 +58,26 @@ def trim(text):
 
 def translate(text, chars=None):
     """Turkish for `text`; with `chars`, prefer a translation at most that long."""
-    text = trim(text)
-    if not text:
-        return ""
+    return translate_many([(text, chars)])[0]
+
+
+def translate_many(items):
+    """Turkish for each (text, chars) pair. Together they run ~2x faster than one by one."""
+    texts = [trim(text) for text, _ in items]
+    todo = [i for i, text in enumerate(texts) if text]
     # Marian models need the end-of-sentence token, or they repeat themselves.
-    tokens = source_spm.encode(text, out_type=str) + ["</s>"]
-    result = translator.translate_batch(
-        [tokens], beam_size=CANDIDATES, num_hypotheses=CANDIDATES, return_scores=True, max_decoding_length=256
-    )[0]
-    options = [(target_spm.decode(h), s) for h, s in zip(result.hypotheses, result.scores)]
+    tokens = [source_spm.encode(texts[i], out_type=str) + ["</s>"] for i in todo]
+    results = translator.translate_batch(
+        tokens, beam_size=CANDIDATES, num_hypotheses=CANDIDATES, return_scores=True, max_decoding_length=256
+    ) if tokens else []
+    out = [""] * len(items)
+    for i, result in zip(todo, results):
+        options = [(target_spm.decode(h), s) for h, s in zip(result.hypotheses, result.scores)]
+        out[i] = choose(options, items[i][1])
+    return out
+
+
+def choose(options, chars):
     best, best_score = options[0]
     if not chars or len(best) <= chars:
         return best

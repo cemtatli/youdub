@@ -601,18 +601,50 @@
     queued.clear();
   }
 
-  // English cues get their Turkish just before they are synthesized. The model picks a
-  // translation that fits the time until the next sentence at normal speed, if it has one.
+  // English cues are translated ahead, a few sentences per request, from where the video is
+  // and then the rest: the translator (a separate process) finishes early and exits, giving
+  // its memory back. A sentence needed before its batch arrives waits for that batch. For
+  // each sentence the model picks a translation that fits the time until the next one at
+  // normal speed, if it has one.
+  const TRANSLATE_BATCH = 8;
+
+  function translateBatch(from) {
+    const cues = state.cues;
+    const batch = [];
+    for (let i = from; i < cues.length && batch.length < TRANSLATE_BATCH; i += 1) {
+      if (cues[i].text === null && !cues[i].pending) batch.push(i);
+    }
+    const items = batch.map((i) => {
+      const next = cues[i + 1];
+      const slot = (next ? next.start : cues[i].end + 1.5) - cues[i].start;
+      return [cues[i].source, Math.round(slot * EMA_CHARS_PER_SEC)];
+    });
+    const request = voiceRequest("/translate", { items }).then((data) => {
+      const texts = data && parseJson(data)?.texts;
+      batch.forEach((i, k) => {
+        delete cues[i].pending;
+        if (texts) cues[i].text = closeSentence(speakable(texts[k] ?? "")); // "" = nothing to say
+      });
+      return Boolean(texts);
+    });
+    for (const i of batch) cues[i].pending = request;
+    return request;
+  }
+
+  async function translateAhead(cues) {
+    while (state.on && state.cues === cues) {
+      const open = (i) => cues[i].text === null && !cues[i].pending;
+      let from = cues.findIndex((_, i) => i >= state.index && open(i));
+      if (from === -1) from = cues.findIndex((_, i) => open(i));
+      if (from === -1) return log("all sentences translated");
+      if (!(await translateBatch(from))) await wait(2000); // the next try, not a busy loop
+    }
+  }
+
   function cueText(index) {
     const cue = state.cues[index];
-    if (cue.text) return Promise.resolve(cue.text);
-    const next = state.cues[index + 1];
-    const slot = (next ? next.start : cue.end + 1.5) - cue.start;
-    return voiceRequest("/translate", { text: cue.source, chars: Math.round(slot * EMA_CHARS_PER_SEC) }).then((data) => {
-      const turkish = data && parseJson(data)?.text;
-      if (turkish) cue.text = closeSentence(speakable(turkish));
-      return cue.text || null;
-    });
+    if (cue.text !== null) return Promise.resolve(cue.text || null);
+    return (cue.pending ?? translateBatch(index)).then(() => cue.text || null);
   }
 
   function requestClip(index) {
@@ -794,7 +826,7 @@
       state.engine = voice ? "ema" : "browser";
       // A stale extension (not reloaded after an update) can't pass /translate on: try it once.
       const localTranslation =
-        Boolean(voice?.translate) && !preferYouTube() && Boolean(await voiceRequest("/translate", { text: "Hello." }, 5000));
+        Boolean(voice?.translate) && !preferYouTube() && Boolean(await voiceRequest("/translate", { items: [["Hello.", null]] }, 8000));
       if (state.videoId !== videoId || !state.cues.length || state.localTranslation !== localTranslation) {
         state.cues = await loadCues(videoId, localTranslation);
         state.videoId = videoId;
@@ -810,6 +842,7 @@
       resetIndex(video?.currentTime ?? 0);
       clearInterval(state.timer);
       state.timer = setInterval(tick, 150);
+      if (state.translator === "local") translateAhead(state.cues);
     } catch (error) {
       log(error);
       toast(error.message);

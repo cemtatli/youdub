@@ -5,8 +5,8 @@ Turkish comes out inverted ("devrik"). This model (1-800-BAD-CODE/punct_cap_seg_
 Apache-2.0, int8 ONNX ~53 MB in models/punct-en, built by install.sh) adds punctuation and
 capitals and splits the text into sentences: a whole video in about a second.
 
-It is needed once per video, so it is loaded for each request and dropped afterwards
-(~0.2 s to load) instead of holding ~140 MB while the video plays.
+It is needed once per video and runs in worker.py's child process, which goes away when
+idle, so its ~140 MB are not held while the video plays.
 """
 
 from pathlib import Path

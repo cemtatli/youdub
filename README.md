@@ -28,13 +28,16 @@ so in the top-left message.
 - **TR on** → `dub.js` (page) asks `bridge.js` → `background.js` to start the voice.
   Chrome launches `server/youdub-host`, which loads the model (~2 s) and serves TTS on
   `127.0.0.1:7845`, answering the youdub extension only. Pages can't reach local
-  addresses, so `background.js` makes the voice requests for the page. ~730 MB RAM while on
-  (voice ~260 MB, translation ~470 MB).
+  addresses, so `background.js` makes the voice requests for the page. ~240-360 MB RAM while
+  on. Translation and punctuation run in a separate low-priority process
+  (`server/worker.py`, up to ~700 MB) that exits 20 s after its last request: inside the
+  server, freeing the model gave no memory back.
 - **Captions**: picks the video's spoken language from the player's audio track, then asks
   the player for Turkish captions (`tlang=tr`). The player fetches them with its own token;
   youdub keeps a copy of that response. A direct request is the fallback.
-- **Translation** (English videos): youdub takes the English captions and translates each
-  sentence just before it is spoken (~0.2 s). YouTube's Turkish runs 25-60% longer than the
+- **Translation** (English videos): youdub takes the English captions and translates them
+  ahead, 8 sentences per request, from where the video is and then the rest (a 20-minute
+  video in ~35 s, ~2 of 8 cores on an M3). YouTube's Turkish runs 25-60% longer than the
   English; OPUS-MT stays close to it. The model returns 4 candidates; a shorter one replaces
   the best only if it is nearly as likely and saves real time (one word can flip the
   meaning). Filler words ("um", ", you know,") are dropped first. English auto captions

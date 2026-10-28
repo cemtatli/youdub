@@ -5,9 +5,11 @@ websites and other machines on the network cannot use it. Browsers block YouTube
 from reaching local addresses, so the extension's service worker makes the requests.
 
   POST /speak      {"text": "...", "speed": 1.0}  ->  audio/wav
-  POST /translate  {"text": "...", "chars": 120}  ->  {"text": "..."}  (English -> Turkish)
-  POST /punctuate  {"text": "..."}               ->  {"sentences": [...]}  (English auto captions)
-  POST /health                                    ->  {"ok": true, "translate": true}
+  POST /translate  {"items": [["...", 120], ...]}  ->  {"texts": [...]}  (English -> Turkish)
+  POST /punctuate  {"text": "..."}                  ->  {"sentences": [...]}  (English auto captions)
+  POST /health                                       ->  {"ok": true, "translate": true}
+
+Translation and punctuation run in a child process that exits when idle (worker.py).
 
 Both are POST because the browser leaves the Origin header off an extension's GET.
 """
@@ -25,18 +27,20 @@ from ema_lightning import EMA
 import lexicon
 import punctuate
 import translate
+from worker import Worker
 
 HOST = "127.0.0.1"
 PORT = 7845
 ALLOWED_ORIGINS = {"chrome-extension://eadpkhjldhfpfdaaabibjmijjmgnefdk"}  # fixed by manifest.json "key"
 MAX_CHARS = 600
 MAX_TRANSCRIPT = 400_000  # /punctuate gets a whole video's captions; an hour is ~60k
+MAX_ITEMS = 32  # sentences per /translate
 
 log = logging.getLogger("youdub")
 tts = None
 english = {}  # English words -> Turkish respelling (lexicon.py)
 speaking = threading.Lock()  # one sentence at a time: requests arrive in parallel
-translating = threading.Lock()
+worker = Worker()
 
 
 def load():
@@ -48,8 +52,7 @@ def load():
         english = lexicon.load()
         if not english:
             log.warning("no %s; English words will be read the Turkish way (run install.sh)", lexicon.TABLE)
-        translate.load()
-        if not translate.translator:
+        if not translate.available():
             log.warning("no %s; using YouTube's translation (run install.sh)", translate.MODEL)
 
 
@@ -97,34 +100,33 @@ class Handler(BaseHTTPRequestHandler):
         if not self.origin():
             return self.reply(403)
         if self.path == "/health":
-            return self.reply(200, json.dumps({"ok": True, "translate": bool(translate.translator)}).encode())
+            return self.reply(200, json.dumps({"ok": True, "translate": translate.available()}).encode())
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            limit = MAX_TRANSCRIPT if self.path == "/punctuate" else MAX_CHARS
+            limit = MAX_CHARS if self.path == "/speak" else MAX_TRANSCRIPT
             payload = json.loads(self.rfile.read(min(length, limit * 4)) or b"{}")
             text = str(payload.get("text", "")).strip()[:limit]
             speed = min(2.0, max(0.5, float(payload.get("speed", 1.0))))
-            chars = int(payload["chars"]) if payload.get("chars") else None
+            items = [[str(t).strip()[:MAX_CHARS], int(c) if c else None] for t, c in payload.get("items", [])[:MAX_ITEMS]]
         except (ValueError, TypeError):
             return self.reply(400)
-        if not text:
+        if not text and not items:
             return self.reply(400)
 
-        if self.path == "/punctuate":
-            if not punctuate.available():
+        if self.path in ("/punctuate", "/translate"):
+            if not (punctuate if self.path == "/punctuate" else translate).available():
                 return self.reply(404)
-            with translating:
-                sentences = punctuate.sentences(text)
-            log.info("punctuated %d chars into %d sentences", len(text), len(sentences))
-            return self.reply(200, json.dumps({"sentences": sentences}, ensure_ascii=False).encode())
-
-        if self.path == "/translate":
-            if not translate.translator:
-                return self.reply(404)
-            with translating:
-                turkish = translate.translate(text, chars)
-            log.info("tr %d/%s  %s", len(turkish), chars, turkish[:70])
-            return self.reply(200, json.dumps({"text": turkish}, ensure_ascii=False).encode())
+            try:
+                if self.path == "/punctuate":
+                    reply = {"sentences": worker.call("punctuate", text=text)}
+                    log.info("punctuated %d chars into %d sentences", len(text), len(reply["sentences"]))
+                else:
+                    reply = {"texts": worker.call("translate", items=items)}
+                    log.info("translated %d: %s", len(items), reply["texts"][0][:60] if reply["texts"] else "")
+            except RuntimeError as error:
+                log.warning("%s failed: %s", self.path, error)
+                return self.reply(500)
+            return self.reply(200, json.dumps(reply, ensure_ascii=False).encode())
 
         with speaking:
             speech = tts.say(lexicon.respell(text, english), speed=speed, seed=0)
