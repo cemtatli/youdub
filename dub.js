@@ -176,7 +176,13 @@
   }
 
   // Sound tags ([Müzik], ♪), censor stars and speaker marks (>>), in any language.
-  const withoutTags = (text) => text.replace(/\[[^\]]*\]|[♪♫]|\p{L}*\*+\p{L}*|>>/gu, " ").replace(/\s+/g, " ").trim();
+  const ENTITIES = { "&gt;": ">", "&lt;": "<", "&amp;": "&", "&quot;": '"', "&#39;": "'", "&nbsp;": " " };
+  const withoutTags = (text) =>
+    text
+      .replace(/&(?:gt|lt|amp|quot|#39|nbsp);/g, (entity) => ENTITIES[entity])
+      .replace(/\[[^\]]*\]|[♪♫]|\p{L}*\*+\p{L}*|>+|<+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
   // Captions are written to be read, not heard. Drop sound tags and say slashes the way
   // people do: the voice would read "/" as "eğik çizgi".
@@ -191,6 +197,18 @@
       .replace(/#(?=\d)/g, "") // #1: not "hashtag bir"
       .replace(/~\s*(?=\d)/g, "yaklaşık ")
       .replace(/(\d)\s*[x×](?![\p{L}\d])/gu, "$1 kat") // 3x daha hızlı
+      .replace(/%\s*(\d)/g, "yüzde $1") // %50
+      .replace(/(\d+(?:[.,]\d+)*)\s*%/g, "yüzde $1") // 50%
+      .replace(/\$\s*(\d+(?:[.,]\d+)*)/g, "$1 dolar")
+      .replace(/€\s*(\d+(?:[.,]\d+)*)/g, "$1 avro")
+      .replace(/\bC\+\+/g, "C plus plus") // the server respells English words: "si plas plas"
+      .replace(/\b([CF])#/g, "$1 sharp")
+      .replace(/\s&\s/g, " ve ")
+      .replace(/\s[-–—]+\s/g, ", ") // a dash between words is a pause, not "tire"
+      // Anything else that isn't a letter, digit or punctuation would be read out by name
+      // ("büyük işareti" for ">"), so it goes.
+      .replace(/[^\p{L}\p{N}\p{M}\s.,!?…:;'’"()\-]/gu, " ")
+      .replace(/\s+([.,!?…:;])/g, "$1")
       .replace(/\s+/g, " ")
       .trim();
   }
