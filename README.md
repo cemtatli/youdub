@@ -2,7 +2,8 @@
 
 Chrome extension that speaks YouTube videos in Turkish while you watch.
 
-It uses YouTube's own Turkish captions (auto-translated when needed) and a natural Turkish
+English videos are translated on your machine ([OPUS-MT](https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-en-tr),
+CC-BY-4.0); other languages use YouTube's own Turkish captions. Speech is a natural Turkish
 voice that runs on your machine ([EMA Lightning](https://github.com/canberk7/ema-lightning),
 model on [Hugging Face](https://huggingface.co/canberkkkkkk/ema-lightning), ~34 MB, Apache 2.0).
 The voice starts only when you press **TR** and stops when you turn it off or close the tab.
@@ -11,7 +12,8 @@ No cloud, no API keys.
 ## Install
 
 1. Run once: `./install.sh`
-   Creates `server/.venv` (EMA Lightning + PyTorch) and registers the local voice with
+   Creates `server/.venv` (EMA Lightning + PyTorch), converts the English → Turkish model
+   (`server/models`, ~230 MB) and registers the local voice with
    Chrome, Brave, Chromium and Helium (native messaging manifest `com.youdub.tts`).
 2. Open `chrome://extensions`, turn on **Developer mode**, **Load unpacked** → this folder.
    The extension ID is fixed (`eadpkhjldhfpfdaaabibjmijjmgnefdk`) by the `key` in
@@ -26,10 +28,21 @@ so in the top-left message.
 - **TR on** → `dub.js` (page) asks `bridge.js` → `background.js` to start the voice.
   Chrome launches `server/youdub-host`, which loads the model (~2 s) and serves TTS on
   `127.0.0.1:7845`, answering the youdub extension only. Pages can't reach local
-  addresses, so `background.js` makes the voice requests for the page. ~260 MB RAM while on.
+  addresses, so `background.js` makes the voice requests for the page. ~730 MB RAM while on
+  (voice ~260 MB, translation ~470 MB).
 - **Captions**: picks the video's spoken language from the player's audio track, then asks
   the player for Turkish captions (`tlang=tr`). The player fetches them with its own token;
   youdub keeps a copy of that response. A direct request is the fallback.
+- **Translation** (English videos): youdub takes the English captions and translates each
+  sentence just before it is spoken (~0.2 s). YouTube's Turkish runs 25-60% longer than the
+  English; OPUS-MT stays close to it. The model returns 4 candidates; a shorter one replaces
+  the best only if it is nearly as likely and saves real time (one word can flip the
+  meaning). Filler words ("um", ", you know,") are dropped first. English auto captions
+  have no punctuation, and translating half sentences gives inverted Turkish, so a small
+  model ([punct_cap_seg_en](https://huggingface.co/1-800-BAD-CODE/punct_cap_seg_en),
+  Apache-2.0, ~53 MB, loaded only for that second) first splits the whole transcript into
+  sentences. Without it, sentences are cut at the speaker's pauses. Shift+click **TR** switches between
+  this and YouTube's translation, to compare.
 - **Sentences**: caption fragments are merged at punctuation, a pause over 1.2 s, or ~7 s.
   Auto captions have no punctuation, so youdub adds it (the voice's intonation follows
   it): a comma where the speaker paused, a "?" after the question particle (mı/mi/mu/mü),
@@ -39,13 +52,13 @@ so in the top-left message.
   a table `install.sh` builds once from the CMU Pronouncing Dictionary, with Turkish and
   English word frequencies deciding which words are English (`server/lexicon.py`, ~24 MB RAM).
 - **Timing**: the next ~20 s of sentences are synthesized ahead. Turkish usually runs
-  longer than English, so a sentence that won't fit is spoken a little faster (up to 1.08x,
-  1.15x when behind; pitch kept), may run up to 1.5 s into the next one, and the video slows
+  longer than English, so a sentence that won't fit is spoken a little faster (up to 1.05x,
+  1.12x when behind; pitch kept), may run up to 1.5 s into the next one, and the video slows
   down for the rest (down to 0.85x of your chosen speed). Sentences are synthesized two at
   a time, the one due soonest first, so a seek gets its sentence quickly.
 - Ads: TR waits for the ad to end and stays silent during mid-roll ads.
 - **Ducking**: while Turkish plays, the original audio goes through Web Audio: the speech
-  band (~0.6–3.8 kHz) drops ~36 dB, the rest ~12 dB, so music keeps its bass and highs.
+  band (~0.6–3.8 kHz) drops ~40 dB, the rest ~16 dB, so music keeps its bass and highs.
 - Follows pause, play, seek, buffering, speed changes and moving to another video.
 - **TR off / last tab closed** → Chrome closes the host's stdin; the voice exits.
 
@@ -73,7 +86,9 @@ worker console (`chrome://extensions` → youdub → service worker).
 
 - Automated browsers (`navigator.webdriver`) get empty captions from YouTube; test in a
   normal Chrome profile.
-- Translation quality is YouTube's auto-translate; videos without captions are not dubbed.
+- Local translation is English only, and sentence by sentence: it can miss context
+  ("ship" → "gemi"). Other languages get YouTube's auto-translate. Videos without captions
+  are not dubbed.
 
 ## Credits
 

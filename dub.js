@@ -4,10 +4,11 @@
 // https://github.com/ilyhalight/voice-over-translation
 (() => {
   const TARGET_LANG = "tr";
+  const TRANSLATOR_KEY = "youdub.translator"; // "youtube" to skip the local translation
   // Original audio while Turkish speech plays: the whole track a little quieter, the
   // speech band much quieter, so the music keeps its bass and highs.
-  const DUCK_GAIN = 0.25; // -12 dB
-  const DUCK_VOICE_DB = -24; // on top of DUCK_GAIN: the voice ends up ~-36 dB
+  const DUCK_GAIN = 0.15; // -16.5 dB
+  const DUCK_VOICE_DB = -24; // on top of DUCK_GAIN: the voice ends up ~-40 dB
   const VOICE_BAND_HZ = 1500;
   const VOICE_BAND_Q = 0.5; // wide: roughly 600 Hz – 3.8 kHz
   const DUCK_ATTACK = 0.08; // seconds (time constant); quiet down fast
@@ -21,13 +22,14 @@
   // hard to notice with its own voice ducked, so the voice speeds up only a little and the
   // video slows down for the rest; only a large backlog makes us skip.
   const EMA_CHARS_PER_SEC = 17.5; // measured: EMA Lightning at speed 1
-  const MAX_SPEED = 1.08; // fastest normal pace (EMA speed × stretch)
-  const CATCH_UP_SPEED = 1.15; // allowed only while we are more than DRIFT_ALLOWANCE behind
+  const MAX_SPEED = 1.05; // fastest normal pace (EMA speed × stretch)
+  const CATCH_UP_SPEED = 1.12; // allowed only while we are more than DRIFT_ALLOWANCE behind
   const EMA_LATE_SKIP = 4;
   const MIN_VIDEO_RATE = 0.85; // slow the video this far (relative) when Turkish still won't fit
   // Speech may run this far behind the video; the backlog closes at the next pause. It is one
   // shared budget: lateness left by earlier sentences is taken out of it, so it can't pile up.
   const DRIFT_ALLOWANCE = 1.5;
+  const EARLY_START = 0.3; // a sentence may start this early to close a gap (local voice)
   const SEEK_JOIN = 1; // after a seek, join a sentence only if it began less than this ago
   const KEEP_DUCKED_GAP = 1.5; // stay quiet across short gaps; music and long pauses come back
   const MERGE_GAP = 0.5; // join neighbouring sentences closer than this for natural flow
@@ -44,6 +46,8 @@
     timer: 0,
     loading: false,
     engine: "browser",
+    translator: null, // "local" (OPUS-MT), "youtube" or "none" (Turkish captions)
+    localTranslation: false,
   };
 
   const getPlayer = () => document.getElementById("movie_player");
@@ -55,16 +59,39 @@
   // --- captions -------------------------------------------------------------
 
   // The player sends caption requests with the right token itself. We keep a copy of
-  // every caption response it receives, keyed by video, source language and target.
+  // every caption response it receives, keyed by video, source language and target, and
+  // the last request URL per video and language: with its token we can ask for the same
+  // track with another target ourselves.
   const captured = new Map();
+  const capturedUrls = new Map(); // "videoId|lang" -> URL
   const captionKey = (videoId, lang, tlang) => `${videoId}|${lang}|${tlang ?? ""}`;
+  // YouTube answers a refused request (too many requests) with an HTML "Sorry..." page.
+  const isCaptionJson = (body) => body?.trim().startsWith("{");
+  let refused = false;
+
   function remember(url, body) {
-    if (!body?.trim()) return;
+    if (!isCaptionJson(body)) {
+      if (body?.includes("<html")) refused = true;
+      return;
+    }
     try {
-      const params = new URL(url, location.origin).searchParams;
+      const parsed = new URL(url, location.origin);
+      const params = parsed.searchParams;
       if (params.get("fmt") !== "json3") return;
       captured.set(captionKey(params.get("v"), params.get("lang"), params.get("tlang")), body);
+      capturedUrls.set(`${params.get("v")}|${params.get("lang")}`, parsed);
     } catch {}
+  }
+
+  // The player keeps the track it shows: asked for plain English while it shows English →
+  // Turkish, it sends nothing. Reuse its last URL (and token) with our target instead.
+  function siblingUrl(videoId, lang, tlang) {
+    const known = capturedUrls.get(`${videoId}|${lang}`);
+    if (!known) return null;
+    const url = new URL(known);
+    if (tlang) url.searchParams.set("tlang", tlang);
+    else url.searchParams.delete("tlang");
+    return url.toString();
   }
   const xhrOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
@@ -113,10 +140,11 @@
     return { params, hasPot: Boolean(pot) };
   }
 
-  // Prefer a human-made Turkish track; otherwise translate the video's own language.
+  // Prefer a human-made Turkish track; otherwise translate the video's own language: English
+  // on this machine when the local model is there (`local`), anything else by YouTube.
   // A video can list many auto tracks (de, ar, …); the spoken language is the first
   // caption of the player's current audio track, not the first item in the list.
-  function pickTrack() {
+  function pickTrack(localTranslation) {
     const player = getPlayer();
     const renderer = player?.getPlayerResponse?.()?.captions?.playerCaptionsTracklistRenderer;
     const tracks = renderer?.captionTracks ?? [];
@@ -133,7 +161,9 @@
       tracks.find((t) => t.kind !== "asr" && t.isTranslatable) ??
       tracks.find((t) => t.isTranslatable) ??
       null;
-    return source ? { track: source, translate: true } : null;
+    if (!source) return null;
+    if (localTranslation && source.languageCode.startsWith("en")) return { track: source, translate: false, local: true };
+    return { track: source, translate: true };
   }
 
   function captionUrl({ track, translate }) {
@@ -145,11 +175,13 @@
     return url.toString();
   }
 
-  // Captions are written to be read, not heard. Drop sound tags ([Müzik], ♪) and censor
-  // stars, and say slashes the way people do: the voice would read "/" as "eğik çizgi".
+  // Sound tags ([Müzik], ♪), censor stars and speaker marks (>>), in any language.
+  const withoutTags = (text) => text.replace(/\[[^\]]*\]|[♪♫]|\p{L}*\*+\p{L}*|>>/gu, " ").replace(/\s+/g, " ").trim();
+
+  // Captions are written to be read, not heard. Drop sound tags and say slashes the way
+  // people do: the voice would read "/" as "eğik çizgi".
   function speakable(text) {
-    return text
-      .replace(/\[[^\]]*\]|[♪♫]|\p{L}*\*+\p{L}*/gu, " ")
+    return withoutTags(text)
       .replace(/(\S\.\p{L}{2,})\/\S*/gu, "$1") // a link: keep the site, drop the path
       .replace(/(?<!\p{L})ve\s*\/\s*veya(?!\p{L})/giu, "veya")
       .replace(/(\p{L})\s*\/\s*(?=\p{L})/gu, "$1 ya da ") // kullanıcı/müşteri
@@ -183,11 +215,13 @@
 
   // json3 events → lines → speakable cues. A cue ends at sentence punctuation,
   // a pause in speech, or when it gets long (auto captions have no punctuation).
-  function buildCues(json) {
+  // English cues (`english`) keep their text in `source`; `text` is filled in by cueText().
+  function buildCues(json, english = false) {
     const lines = [];
     for (const event of json.events ?? []) {
       if (!event.segs) continue;
-      const text = speakable(event.segs.map((seg) => seg.utf8 ?? "").join(""));
+      const raw = event.segs.map((seg) => seg.utf8 ?? "").join("");
+      const text = english ? withoutTags(raw) : speakable(raw);
       if (!text) continue;
       const start = event.tStartMs / 1000;
       lines.push({ start, end: start + (event.dDurationMs ?? 0) / 1000, text });
@@ -230,19 +264,128 @@
       } else merged.push({ ...cue });
     }
     for (const cue of merged) cue.text = closeSentence(cue.text);
+    if (english) for (const cue of merged) [cue.source, cue.text] = [cue.text, null];
     return merged;
+  }
+
+  // English auto captions have no punctuation and roll on screen, so their lines cut
+  // sentences anywhere ("let's imagine you" | "built an app"). Translating such halves gives
+  // broken, inverted Turkish (the verb comes last). The server's punctuation model splits the
+  // whole transcript into sentences, which we place on the word times. Word times come with
+  // the caption when it has them; otherwise the words of a line are spread evenly over it.
+  // Without the model we cut at the speaker's pauses, and split a long run at its best point:
+  // a long pause, or before a word that usually starts a clause, late in the run.
+  const ASR_PAUSE = 0.7; // seconds between word starts that read as a pause
+  const ASR_MIN_SECONDS = 2.5;
+  const ASR_MAX_SECONDS = 10;
+  const CLAUSE_START = /^(but|so|and|because|however|which|then|now|if|when|while|where|although|or)$/i;
+
+  function asrWords(json) {
+    const events = (json.events ?? []).filter((event) => event.segs && !event.aAppend);
+    const words = [];
+    events.forEach((event, e) => {
+      const eventEnd = Math.min(event.tStartMs + (event.dDurationMs ?? 0), events[e + 1]?.tStartMs ?? Infinity);
+      event.segs.forEach((seg, s) => {
+        const from = event.tStartMs + (seg.tOffsetMs ?? 0);
+        const to = event.segs[s + 1]?.tOffsetMs != null ? event.tStartMs + event.segs[s + 1].tOffsetMs : eventEnd;
+        const parts = withoutTags(seg.utf8 ?? "").split(" ").filter(Boolean);
+        parts.forEach((text, k) => words.push({ text, start: (from + ((to - from) * k) / parts.length) / 1000 }));
+      });
+    });
+    return words;
+  }
+
+  const cueFor = (words, first, last, source) => ({
+    start: words[first].start,
+    end: Math.min(words[last].start + 0.6, words[last + 1]?.start ?? Infinity),
+    source,
+    text: null,
+  });
+
+  // Walk the sentences over the words by their letters: the model changes case and
+  // punctuation, never the letters themselves (except unknown symbols, rare).
+  function sentenceCues(words, sentences) {
+    const letters = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "").length;
+    const cues = [];
+    let first = 0;
+    let wordLetters = 0;
+    let sentenceLetters = 0;
+    for (const sentence of sentences) {
+      if (first >= words.length) break;
+      sentenceLetters += letters(sentence);
+      let last = first;
+      wordLetters += letters(words[first].text);
+      while (last + 1 < words.length && wordLetters + letters(words[last + 1].text) / 2 <= sentenceLetters) {
+        last += 1;
+        wordLetters += letters(words[last].text);
+      }
+      cues.push(cueFor(words, first, last, sentence));
+      first = last + 1;
+    }
+    if (first < words.length) cues[cues.length - 1].end = words[words.length - 1].start + 0.6;
+    // Short neighbouring sentences go together, as in buildCues, for a natural flow.
+    const merged = [];
+    for (const cue of cues) {
+      const last = merged[merged.length - 1];
+      if (
+        last &&
+        cue.start - last.end < MERGE_GAP &&
+        cue.end - last.start <= MERGE_MAX_SECONDS &&
+        last.source.length + cue.source.length < MERGE_MAX_CHARS
+      ) {
+        last.source += ` ${cue.source}`;
+        last.end = Math.max(last.end, cue.end);
+      } else merged.push(cue);
+    }
+    return merged;
+  }
+
+  function pauseCues(words) {
+    const gapAfter = (i) => (i + 1 < words.length ? words[i + 1].start - words[i].start : Infinity);
+    const cues = [];
+    let first = 0;
+    const cut = (last) => {
+      cues.push(cueFor(words, first, last, words.slice(first, last + 1).map((w) => w.text).join(" ")));
+      first = last + 1;
+    };
+    for (let i = 0; i < words.length; i += 1) {
+      const length = words[i].start - words[first].start;
+      if (gapAfter(i) >= ASR_PAUSE && length >= ASR_MIN_SECONDS) cut(i);
+      else if (length >= ASR_MAX_SECONDS) {
+        let best = i;
+        let bestScore = -1;
+        for (let j = first + 3; j < i; j += 1) {
+          const late = (words[j].start - words[first].start) / ASR_MAX_SECONDS; // 0..1
+          const score = gapAfter(j) + (CLAUSE_START.test(words[j + 1].text) ? 0.4 : 0) + 0.3 * late;
+          if (score > bestScore) [best, bestScore] = [j, score];
+        }
+        cut(best);
+        i = best;
+      }
+    }
+    if (first < words.length) cut(words.length - 1);
+    return cues;
+  }
+
+  async function buildAsrCues(json) {
+    const words = asrWords(json);
+    if (!words.length) return [];
+    const reply = await voiceRequest("/punctuate", { text: words.map((w) => w.text).join(" ") }, 30000);
+    const sentences = reply && parseJson(reply)?.sentences;
+    return sentences?.length ? sentenceCues(words, sentences) : pauseCues(words);
   }
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // 1) Ask the player to show the Turkish captions; it fetches them with its own token
   //    and the hook above keeps the response. 2) If nothing arrives, request them directly.
-  async function loadCues(videoId) {
-    const choice = pickTrack();
+  async function loadCues(videoId, localTranslation = false) {
+    const choice = pickTrack(localTranslation);
     if (!choice) throw new Error("Bu videoda altyazı yok.");
     const lang = choice.track.languageCode;
     const tlang = choice.translate ? TARGET_LANG : undefined;
     const key = captionKey(videoId, lang, tlang);
+    refused = false;
 
     if (!captured.has(key)) {
       const player = getPlayer();
@@ -255,15 +398,25 @@
     }
 
     let body = captured.get(key);
+    for (const url of body ? [] : [siblingUrl(videoId, lang, tlang), captionUrl(choice)]) {
+      if (!url) continue;
+      const response = await pageFetch(url, { credentials: "include" }).catch(() => null);
+      body = response ? await response.text() : "";
+      if (isCaptionJson(body)) break;
+      if (body.includes("<html") || response?.status === 429) refused = true;
+      body = "";
+    }
     if (!body) {
-      const response = await pageFetch(captionUrl(choice), { credentials: "include" });
-      body = response.ok ? await response.text() : "";
+      throw new Error(
+        refused
+          ? "YouTube altyazı isteklerini geçici olarak engelledi (çok fazla istek). Biraz sonra tekrar dene."
+          : "Altyazı alınamadı. Altyazıyı (CC) bir kez açıp kapatıp tekrar dene.",
+      );
     }
-    if (!body?.trim()) {
-      throw new Error("Altyazı alınamadı. Altyazıyı (CC) bir kez açıp kapatıp tekrar dene.");
-    }
-    const cues = buildCues(JSON.parse(body));
-    log("cues", cues.length, lang, tlang ? `→ ${tlang}` : "");
+    const json = JSON.parse(body);
+    const cues = choice.local && choice.track.kind === "asr" ? await buildAsrCues(json) : buildCues(json, Boolean(choice.local));
+    state.translator = choice.local ? "local" : tlang ? "youtube" : "none";
+    log("cues", cues.length, lang, tlang ? `→ ${tlang}` : "", state.translator);
     return cues;
   }
 
@@ -329,7 +482,7 @@
   let generation = 0; // bumps on seek/stop so stale replies are dropped
 
   // Ask the extension (bridge.js → background.js) to start the local voice. It runs only
-  // while TR is on. Resolves true when the voice answers, false to use the browser voice.
+  // while TR is on. Resolves to its /health answer, or false to use the browser voice.
   function startVoice() {
     return new Promise((resolve) => {
       const done = (ok) => {
@@ -377,9 +530,18 @@
     });
   }
 
+  const parseJson = (data) => {
+    try {
+      return JSON.parse(new TextDecoder().decode(data));
+    } catch {
+      return null;
+    }
+  };
+
   async function serverUp() {
     for (const timeout of [4000, 2000]) {
-      if (await voiceRequest("/health", null, timeout)) return true;
+      const data = await voiceRequest("/health", null, timeout);
+      if (data) return parseJson(data) ?? {};
     }
     return false;
   }
@@ -439,8 +601,23 @@
     queued.clear();
   }
 
+  // English cues get their Turkish just before they are synthesized. The model picks a
+  // translation that fits the time until the next sentence at normal speed, if it has one.
+  function cueText(index) {
+    const cue = state.cues[index];
+    if (cue.text) return Promise.resolve(cue.text);
+    const next = state.cues[index + 1];
+    const slot = (next ? next.start : cue.end + 1.5) - cue.start;
+    return voiceRequest("/translate", { text: cue.source, chars: Math.round(slot * EMA_CHARS_PER_SEC) }).then((data) => {
+      const turkish = data && parseJson(data)?.text;
+      if (turkish) cue.text = closeSentence(speakable(turkish));
+      return cue.text || null;
+    });
+  }
+
   function requestClip(index) {
-    return voiceRequest("/speak", { text: state.cues[index].text, speed: plannedSpeed(index) })
+    return cueText(index)
+      .then((text) => text && voiceRequest("/speak", { text, speed: plannedSpeed(index) }))
       .then((data) => data && new Blob([data], { type: "audio/wav" }))
       .then(
         (blob) =>
@@ -573,7 +750,7 @@
 
     while (state.index < state.cues.length) {
       const cue = state.cues[state.index];
-      if (time < cue.start) return;
+      if (time < cue.start - (state.engine === "ema" ? EARLY_START : 0)) return;
       if (time - cue.start > (state.engine === "ema" ? EMA_LATE_SKIP : LATE_SKIP)) {
         state.index += 1; // fell behind; skip rather than drift
         continue;
@@ -611,15 +788,21 @@
       if (adShowing()) toast("Reklam bitince Türkçe ses başlayacak.");
       while (adShowing() && state.on) await wait(500);
       if (!state.on) return;
-      if (state.videoId !== videoId || !state.cues.length) {
-        state.cues = await loadCues(videoId);
+      // The voice first: whether it can translate decides which captions we need.
+      const voice = await startVoice();
+      if (!state.on) return stopVoice();
+      state.engine = voice ? "ema" : "browser";
+      // A stale extension (not reloaded after an update) can't pass /translate on: try it once.
+      const localTranslation =
+        Boolean(voice?.translate) && !preferYouTube() && Boolean(await voiceRequest("/translate", { text: "Hello." }, 5000));
+      if (state.videoId !== videoId || !state.cues.length || state.localTranslation !== localTranslation) {
+        state.cues = await loadCues(videoId, localTranslation);
         state.videoId = videoId;
+        state.localTranslation = localTranslation;
       }
       if (!state.on) return; // turned off while loading
-      toast("Türkçe ses başlatılıyor…");
-      state.engine = (await startVoice()) ? "ema" : "browser";
-      if (!state.on) return stopVoice();
-      if (state.engine === "ema") toast("Türkçe ses açık (EMA Lightning)");
+      const translator = { local: ", lokal çeviri", youtube: ", YouTube çevirisi" }[state.translator] ?? "";
+      if (state.engine === "ema") toast(`Türkçe ses açık (EMA Lightning${translator})`);
       else if (!state.voice) toast("Türkçe ses bulunamadı, varsayılan ses kullanılıyor.");
       else toast(`Türkçe ses açık (${state.voice.name}). Doğal ses için install.sh'i bir kez çalıştır.`);
       const video = getVideo();
@@ -640,6 +823,28 @@
     clearInterval(state.timer);
     stopSpeech();
     stopVoice();
+  }
+
+  function preferYouTube() {
+    try {
+      return localStorage.getItem(TRANSLATOR_KEY) === "youtube";
+    } catch {
+      return false;
+    }
+  }
+
+  // Shift+click on TR switches between the local translation and YouTube's, to compare them.
+  function switchTranslator() {
+    const youtube = !preferYouTube();
+    try {
+      localStorage.setItem(TRANSLATOR_KEY, youtube ? "youtube" : "local");
+    } catch {}
+    toast(youtube ? "Çeviri: YouTube" : "Çeviri: lokal (OPUS-MT)");
+    if (!state.on) return;
+    clearInterval(state.timer);
+    stopSpeech();
+    clearAudioCache();
+    start();
   }
 
   function setOn(on) {
@@ -724,12 +929,12 @@
     const button = document.createElement("button");
     button.id = "youdub-toggle";
     button.className = "ytp-button";
-    button.title = "Türkçe seslendirme (youdub)";
+    button.title = "Türkçe seslendirme (youdub) · Shift+tık: çeviriyi değiştir";
     button.setAttribute("aria-label", button.title);
     button.setAttribute("aria-pressed", String(state.on));
     button.appendChild(logoIcon());
     paintButton(button);
-    button.addEventListener("click", () => setOn(!state.on));
+    button.addEventListener("click", (event) => (event.shiftKey ? switchTranslator() : setOn(!state.on)));
     controls.prepend(button);
   }
 
@@ -813,5 +1018,5 @@
   new MutationObserver(mountButton).observe(document.documentElement, { childList: true, subtree: true });
 
   // Debug hook for the console: window.__youdub.state, window.__youdub.loadCues()
-  window.__youdub = { state, loadCues, buildCues, setOn };
+  window.__youdub = { state, captured, loadCues, buildCues, asrWords, sentenceCues, setOn, switchTranslator };
 })();

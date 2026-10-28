@@ -50,10 +50,12 @@ chrome.runtime.onConnect.addListener((port) => {
 // Browsers block YouTube pages from reaching 127.0.0.1, so the page's voice requests come
 // here through bridge.js. Messages are JSON, so the audio travels base64-encoded.
 const VOICE_URL = "http://127.0.0.1:7845";
-const VOICE_PATHS = new Set(["/health", "/speak"]);
+// Any plain path: the server answers only its own (404 otherwise). A fixed list here meant
+// a new server feature stayed blocked until the extension itself was reloaded.
+const VOICE_PATH = /^\/[a-z]+$/;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "voice" || !VOICE_PATHS.has(message.path)) return;
+  if (message?.type !== "voice" || !VOICE_PATH.test(message.path ?? "")) return;
   voiceRequest(message).then(sendResponse, () => sendResponse(null));
   return true; // answer asynchronously
 });
