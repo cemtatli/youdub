@@ -14,24 +14,16 @@
   const ON_CLASS = "youdub-subs"; // on #movie_player while our subtitles are on
   const OWN_CLASS = "youdub-subs-own"; // ...and we draw them ourselves
   const CAPTION_ID = "youdub-caption";
-  const SHADE_ID = "youdub-caption-shade"; // dark gradient at the bottom while a caption shows
   const MAX_CHARS = 84; // two lines of ~42 characters, as on Netflix
   const LINGER = 1.2; // seconds a caption stays after its last word when nothing follows
   const log = (...args) => console.debug("[youdub:subs]", ...args);
 
   // Netflix-style captions: white Geist text on a light, see-through dark box that keeps it
   // readable on any picture. YouTube's caption options offer only a few fonts; this overrides
-  // its inline styles. The size stays YouTube's: it scales with the player and its own size
-  // setting. Geist (OFL) ships with the extension: the page can't be relied on to load fonts
-  // from elsewhere. The extension ID is fixed by the "key" in manifest.json.
-  const FONT_URL = "chrome-extension://eadpkhjldhfpfdaaabibjmijjmgnefdk/fonts/Geist-Variable.woff2";
+  // its inline styles. Geist (OFL) ships with the extension and arrives as bytes (loadFont):
+  // Chrome would not let the page load it from the extension's URL.
+  const FONT_FAMILY = "youdub Geist";
   const STYLE = `
-    @font-face {
-      font-family: "youdub Geist";
-      src: url("${FONT_URL}") format("woff2");
-      font-weight: 100 900;
-      font-display: swap;
-    }
     /* Always centred: YouTube places auto captions by their own anchor, often off to one side. */
     #movie_player.${ON_CLASS} .caption-window {
       left: 50% !important;
@@ -55,10 +47,10 @@
       left: 50%;
       bottom: 6%;
       z-index: 40;
-      max-width: min(82%, 24em);
+      max-width: min(88%, 32em); /* room for two lines of ~42 characters */
       text-align: center;
       text-wrap: balance;
-      line-height: 1.32;
+      line-height: 1.45; /* a little air between the line boxes */
       pointer-events: none;
       opacity: 0;
       transform: translate(-50%, 0.25em);
@@ -71,24 +63,9 @@
       opacity: 1;
       transform: translate(-50%, 0);
     }
-    #${SHADE_ID} {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: 30%;
-      z-index: 39;
-      pointer-events: none;
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.45) 45%, transparent);
-      opacity: 0;
-      transition: opacity 300ms ease;
-    }
-    #${SHADE_ID}.show {
-      opacity: 1;
-    }
     #${CAPTION_ID} span,
     #movie_player.${ON_CLASS} .ytp-caption-segment {
-      font-family: "youdub Geist", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif !important;
+      font-family: "${FONT_FAMILY}", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif !important;
       font-weight: 600 !important;
       letter-spacing: -0.005em !important;
       color: #fff !important;
@@ -99,12 +76,6 @@
       -webkit-box-decoration-break: clone !important;
       text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6) !important;
       -webkit-font-smoothing: antialiased;
-    }
-    /* Our captions sit on the gradient: no box of their own. */
-    #${CAPTION_ID} span {
-      background: transparent !important;
-      padding: 0 !important;
-      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75) !important;
     }
   `;
 
@@ -255,10 +226,6 @@
     let box = document.getElementById(CAPTION_ID);
     if (!box || box.parentElement !== player) {
       box?.remove();
-      document.getElementById(SHADE_ID)?.remove();
-      const shade = document.createElement("div");
-      shade.id = SHADE_ID;
-      player.appendChild(shade);
       box = document.createElement("div");
       box.id = CAPTION_ID;
       box.appendChild(document.createElement("span"));
@@ -277,18 +244,10 @@
     if (caption === shown) return;
     shown = caption;
     box.classList.remove("show");
-    // The gradient stays through the short gaps between captions; it fades only when they stop.
-    document.getElementById(SHADE_ID)?.classList.toggle("show", Boolean(caption) || gapIsShort());
     if (!caption) return;
     box.firstChild.textContent = caption.text;
     void box.offsetWidth; // restart the fade for the new caption
     box.classList.add("show");
-  }
-
-  // Within a second of the next caption: keep the gradient up, so it doesn't pulse.
-  function gapIsShort() {
-    const time = getVideo()?.currentTime ?? 0;
-    return captions.some((c) => c.start > time && c.start - time < 1);
   }
 
   function render() {
@@ -321,7 +280,6 @@
     captionsKey = null;
     captions = [];
     document.getElementById(CAPTION_ID)?.remove();
-    document.getElementById(SHADE_ID)?.remove();
     getPlayer()?.classList.remove(OWN_CLASS);
   }
 
@@ -413,12 +371,37 @@
     paintButton();
   }
 
+  // bridge.js (extension side) reads the font file and posts its bytes; a FontFace made from
+  // bytes needs no URL, so nothing on the page can block it.
+  let fontRequested = false;
+  function loadFont() {
+    if (fontRequested) return;
+    fontRequested = true;
+    let tries = 0;
+    // bridge.js may not be listening yet at page start: ask again until it answers.
+    const ask = setInterval(() => {
+      if (++tries > 10) clearInterval(ask);
+      else window.postMessage({ source: "youdub-page", type: "font" }, "*");
+    }, 500);
+    const onMessage = (event) => {
+      if (event.source !== window || event.data?.source !== "youdub-ext" || event.data.type !== "font") return;
+      window.removeEventListener("message", onMessage);
+      clearInterval(ask);
+      if (!event.data.data) return log("font unavailable");
+      const face = new FontFace(FONT_FAMILY, event.data.data, { weight: "100 900" });
+      face.load().then((loaded) => document.fonts.add(loaded), (error) => log("font failed", error));
+    };
+    window.addEventListener("message", onMessage);
+    window.postMessage({ source: "youdub-page", type: "font" }, "*");
+  }
+
   function mountStyle() {
     if (document.getElementById(`${BUTTON_ID}-style`) || !document.head) return;
     const style = document.createElement("style");
     style.id = `${BUTTON_ID}-style`;
     style.textContent = STYLE;
     document.head.appendChild(style);
+    loadFont();
   }
 
   // --- wiring ---------------------------------------------------------------

@@ -16,6 +16,12 @@ window.addEventListener("message", (event) => {
   } else if (event.data.type === "stop") {
     port?.disconnect();
     port = null;
+  } else if (event.data.type === "font") {
+    // The subtitle font, as bytes: the page can't load it from the extension's URL.
+    fetch(chrome.runtime.getURL("fonts/Geist-Variable.woff2"))
+      .then((response) => response.arrayBuffer())
+      .catch(() => null)
+      .then((data) => window.postMessage({ source: "youdub-ext", type: "font", data }, "*", data ? [data] : []));
   } else if (event.data.type === "voice") {
     // A request for the local voice; background.js makes it (pages can't reach 127.0.0.1).
     const { id, path, body, timeout } = event.data;
