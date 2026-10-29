@@ -16,6 +16,9 @@
   const CAPTION_ID = "youdub-caption";
   const MAX_CHARS = 84; // two lines of ~42 characters, as on Netflix
   const LINGER = 1.2; // seconds a caption stays after its last word when nothing follows
+  const POSITION_KEY = "youdub-subtitles-bottom"; // where the caption was dragged, % from the bottom
+  const DEFAULT_BOTTOM = 6;
+  const CLEAR_OF_CONTROLS = 16; // above this (%), the controls never reach the caption
   const log = (...args) => console.debug("[youdub:subs]", ...args);
 
   // Netflix-style captions: white Geist text on a light, see-through dark box that keeps it
@@ -45,7 +48,7 @@
     #${CAPTION_ID} {
       position: absolute;
       left: 50%;
-      bottom: 6%;
+      bottom: var(--youdub-bottom, ${DEFAULT_BOTTOM}%);
       z-index: 40;
       max-width: min(90%, 44em); /* wide lines: one or two, not a narrow column */
       text-align: center;
@@ -56,12 +59,18 @@
       transform: translate(-50%, 0.25em);
       transition: opacity 160ms ease-out, transform 160ms ease-out, bottom 200ms ease;
     }
-    #movie_player:not(.ytp-autohide) #${CAPTION_ID} {
-      bottom: calc(6% + 52px); /* above the controls while they show */
+    #movie_player:not(.ytp-autohide) #${CAPTION_ID}:not(.raised):not(.dragging) {
+      bottom: calc(var(--youdub-bottom, ${DEFAULT_BOTTOM}%) + 52px); /* above the controls while they show */
     }
     #${CAPTION_ID}.show {
       opacity: 1;
       transform: translate(-50%, 0);
+      pointer-events: auto; /* draggable while it shows */
+      cursor: grab;
+    }
+    #${CAPTION_ID}.dragging {
+      cursor: grabbing;
+      transition: opacity 160ms ease-out, transform 160ms ease-out; /* follow the pointer, no easing */
     }
     #${CAPTION_ID} span,
     #movie_player.${ON_CLASS} .ytp-caption-segment {
@@ -231,6 +240,8 @@
       box.id = CAPTION_ID;
       box.appendChild(document.createElement("span"));
       player.appendChild(box);
+      placeBox(box, player, savedBottom());
+      makeDraggable(box, player);
       // Sized by the picture, like Netflix: ~3.7% of the player's height.
       resize?.disconnect();
       resize = new ResizeObserver(() => {
@@ -239,6 +250,63 @@
       resize.observe(player);
     }
     return box;
+  }
+
+  // --- dragging ---------------------------------------------------------------
+
+  // Some videos have text or UI at the bottom, so the caption can be dragged up or down
+  // (never sideways: it stays centred). Its place is kept for every video; a double-click
+  // puts it back.
+  function savedBottom() {
+    try {
+      const value = Number.parseFloat(localStorage.getItem(POSITION_KEY));
+      return Number.isFinite(value) ? value : DEFAULT_BOTTOM;
+    } catch {
+      return DEFAULT_BOTTOM;
+    }
+  }
+
+  function placeBox(box, player, percent) {
+    const top = 100 - ((box.offsetHeight + 8) / Math.max(1, player.clientHeight)) * 100;
+    const bottom = Math.min(Math.max(1, top), Math.max(1, percent));
+    box.style.setProperty("--youdub-bottom", `${bottom.toFixed(2)}%`);
+    box.classList.toggle("raised", bottom > CLEAR_OF_CONTROLS);
+    return bottom;
+  }
+
+  function makeDraggable(box, player) {
+    // A click on the caption must not reach the player, which would pause the video.
+    for (const type of ["click", "mousedown", "mouseup", "dblclick"]) box.addEventListener(type, (e) => e.stopPropagation());
+    box.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const area = player.getBoundingClientRect();
+      const from = area.bottom - box.getBoundingClientRect().bottom; // where it shows now, in px
+      const startY = event.clientY;
+      let bottom = (from / area.height) * 100;
+      box.setPointerCapture(event.pointerId);
+      box.classList.add("dragging");
+      const move = (e) => {
+        bottom = placeBox(box, player, ((from + startY - e.clientY) / area.height) * 100);
+      };
+      const end = () => {
+        box.removeEventListener("pointermove", move);
+        box.classList.remove("dragging");
+        try {
+          localStorage.setItem(POSITION_KEY, bottom.toFixed(2));
+        } catch {}
+      };
+      box.addEventListener("pointermove", move);
+      box.addEventListener("pointerup", end, { once: true });
+      box.addEventListener("pointercancel", end, { once: true });
+    });
+    box.addEventListener("dblclick", () => {
+      placeBox(box, player, DEFAULT_BOTTOM);
+      try {
+        localStorage.removeItem(POSITION_KEY);
+      } catch {}
+    });
   }
 
   function show(box, caption) {

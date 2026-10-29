@@ -82,6 +82,10 @@ sentences cut at a comma), faded in, centred, in white [Geist](https://vercel.co
 because Chrome would not let the page load it from the extension's URL. The caption data is the player's own response, copied as it
 arrives; without it, YouTube's captions stay, restyled.
 
+Drag a caption up or down when the video has text or UI where it sits; it stays centred
+and keeps that place for every video. Double-click it to put it back at the bottom.
+Clicking a caption doesn't pause the video.
+
 ## Extra buttons
 
 `actions.js` adds two buttons to the Like / Share row under the video (YouTube's own Save
