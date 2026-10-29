@@ -9,7 +9,7 @@
   const ON_CLASS = "youdub-subs"; // on #movie_player while our subtitles are on
   const log = (...args) => console.debug("[youdub:subs]", ...args);
 
-  // Netflix-style captions: no box, white Geist text with a soft dark halo that keeps it
+  // Netflix-style captions: white Geist text on a light, see-through dark box that keeps it
   // readable on any picture. YouTube's caption options offer only a few fonts; this overrides
   // its inline styles. The size stays YouTube's: it scales with the player and its own size
   // setting. Geist (OFL) ships with the extension: the page can't be relied on to load fonts
@@ -42,11 +42,12 @@
       font-weight: 600 !important;
       letter-spacing: -0.005em !important;
       color: #fff !important;
-      background: transparent !important;
-      text-shadow:
-        0 0 2px rgba(0, 0, 0, 0.9),
-        0 0 6px rgba(0, 0, 0, 0.6),
-        0 2px 4px rgba(0, 0, 0, 0.8) !important;
+      background: rgba(0, 0, 0, 0.5) !important;
+      padding: 0.04em 0.35em !important;
+      border-radius: 0.25em !important;
+      box-decoration-break: clone !important;
+      -webkit-box-decoration-break: clone !important;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6) !important;
       -webkit-font-smoothing: antialiased;
     }
   `;

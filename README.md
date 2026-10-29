@@ -73,8 +73,8 @@ To run the voice by hand instead (for debugging): `server/run.sh`.
 with "TR"). One click shows the video's own Turkish captions, or YouTube's auto-translation
 into Turkish from the spoken language (the menu route: CC → language → Auto-translate →
 Türkçe). It stays on across videos until you turn it off. While on, captions are restyled
-Netflix-style and always centred: no box, white [Geist](https://vercel.com/font) text
-(`fonts/`, OFL) with a soft dark halo. The size still follows YouTube's own caption size.
+Netflix-style and always centred: white [Geist](https://vercel.com/font) text
+(`fonts/`, OFL) on a light, see-through dark box. The size still follows YouTube's own caption size.
 
 ## Extra buttons
 
