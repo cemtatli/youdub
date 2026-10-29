@@ -69,12 +69,17 @@ To run the voice by hand instead (for debugging): `server/run.sh`.
 
 ## Turkish subtitles
 
-`subtitles.js` adds a second button next to **TR** in the player controls (a caption box
-with "TR"). One click shows the video's own Turkish captions, or YouTube's auto-translation
-into Turkish from the spoken language (the menu route: CC → language → Auto-translate →
-Türkçe). It stays on across videos until you turn it off. While on, captions are restyled
-Netflix-style and always centred: white [Geist](https://vercel.com/font) text
-(`fonts/`, OFL) on a light, see-through dark box. The size still follows YouTube's own caption size.
+`subtitles.js` adds a globe button next to **TR** in the player controls. One click shows the
+video's own Turkish captions, or YouTube's auto-translation into Turkish from the spoken
+language (the menu route: CC → language → Auto-translate → Türkçe). It stays on across
+videos until you turn it off.
+
+YouTube shows auto captions word by word, like a live stream. youdub draws them itself,
+Netflix-style: a whole sentence at a time (at most two lines of ~42 characters, long
+sentences cut at a comma), faded in, centred, in white [Geist](https://vercel.com/font)
+(`fonts/`, OFL) over a dark gradient at the bottom of the picture. The size follows the
+player (~4.5% of its height). The caption data is the player's own response, copied as it
+arrives; without it, YouTube's captions stay, restyled.
 
 ## Extra buttons
 
