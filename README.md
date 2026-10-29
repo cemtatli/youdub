@@ -67,6 +67,15 @@ so in the top-left message.
 
 To run the voice by hand instead (for debugging): `server/run.sh`.
 
+## Turkish subtitles
+
+`subtitles.js` adds a second button next to **TR** in the player controls (a caption box
+with "TR"). One click shows the video's own Turkish captions, or YouTube's auto-translation
+into Turkish from the spoken language (the menu route: CC → language → Auto-translate →
+Türkçe). It stays on across videos until you turn it off. While on, captions are restyled
+Netflix-style and always centred: no box, white [Geist](https://vercel.com/font) text
+(`fonts/`, OFL) with a soft dark halo. The size still follows YouTube's own caption size.
+
 ## Extra buttons
 
 `actions.js` adds two buttons to the Like / Share row under the video (YouTube's own Save
@@ -97,6 +106,7 @@ worker console (`chrome://extensions` → youdub → service worker).
 
 Caption URL and PO token approach learned from
 [voice-over-translation](https://github.com/ilyhalight/voice-over-translation) (MIT).
+Subtitle font: Geist by Vercel (SIL OFL 1.1, `fonts/OFL.txt`).
 Logo: `icons/logo.svg` (traced from `icons/logo-original.png`).
 English pronunciations: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict)
 (BSD); word frequencies: [FrequencyWords](https://github.com/hermitdave/FrequencyWords)

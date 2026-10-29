@@ -18,6 +18,16 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/Geist-Variable.woff2"
+      ],
+      "matches": [
+        "https://www.youtube.com/*"
+      ]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -25,6 +35,7 @@
       ],
       "js": [
         "dub.js",
+        "subtitles.js",
         "actions.js"
       ],
       "world": "MAIN",

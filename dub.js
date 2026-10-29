@@ -413,6 +413,7 @@
         ...(tlang ? { translationLanguage: { languageCode: tlang } } : {}),
       });
       for (let i = 0; i < 25 && !captured.has(key); i += 1) await wait(200);
+      window.dispatchEvent(new Event("youdub-captions-changed")); // subtitles.js puts its track back
     }
 
     let body = captured.get(key);
