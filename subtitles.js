@@ -47,7 +47,7 @@
       left: 50%;
       bottom: 6%;
       z-index: 40;
-      max-width: min(88%, 32em); /* room for two lines of ~42 characters */
+      max-width: min(90%, 44em); /* wide lines: one or two, not a narrow column */
       text-align: center;
       text-wrap: balance;
       line-height: 1.45; /* a little air between the line boxes */
@@ -143,6 +143,7 @@
       .replace(/&(?:gt|lt|amp|quot|#39|nbsp);/g, (entity) => ENTITIES[entity])
       .replace(/>>+/g, " ") // speaker marks
       .replace(/\s+/g, " ")
+      .replace(/ ([.,!?…:;])/g, "$1") // "düşünün ." → "düşünün."
       .trim();
 
   // json3 → captions of whole sentences. Each line's words are spread over its time (until
@@ -230,10 +231,10 @@
       box.id = CAPTION_ID;
       box.appendChild(document.createElement("span"));
       player.appendChild(box);
-      // Netflix sizes captions by the picture: ~4.5% of the player's height.
+      // Sized by the picture, like Netflix: ~3.7% of the player's height.
       resize?.disconnect();
       resize = new ResizeObserver(() => {
-        box.style.fontSize = `${Math.min(48, Math.max(15, player.clientHeight * 0.045))}px`;
+        box.style.fontSize = `${Math.min(40, Math.max(14, player.clientHeight * 0.037))}px`;
       });
       resize.observe(player);
     }
