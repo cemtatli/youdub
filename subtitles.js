@@ -24,7 +24,7 @@
   // Netflix-style captions: white Geist text on a light, see-through dark box that keeps it
   // readable on any picture. YouTube's caption options offer only a few fonts; this overrides
   // its inline styles. Geist (OFL) ships with the extension and arrives as bytes (loadFont):
-  // Chrome would not let the page load it from the extension's URL.
+  // Chrome lets neither the page nor a content script load it from the extension's URL.
   const FONT_FAMILY = "youdub Geist";
   const STYLE = `
     /* Always centred: YouTube places auto captions by their own anchor, often off to one side. */
@@ -440,7 +440,7 @@
     paintButton();
   }
 
-  // bridge.js (extension side) reads the font file and posts its bytes; a FontFace made from
+  // background.js reads the font file and bridge.js posts its bytes; a FontFace made from
   // bytes needs no URL, so nothing on the page can block it.
   let fontRequested = false;
   function loadFont() {

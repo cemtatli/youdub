@@ -78,8 +78,8 @@ YouTube shows auto captions word by word, like a live stream. youdub draws them 
 Netflix-style: a whole sentence at a time (at most two lines of ~42 characters, long
 sentences cut at a comma), faded in, centred, in white [Geist](https://vercel.com/font)
 (`fonts/`, OFL) on a light, see-through dark box per line. The size follows the player
-(~3.7% of its height). The font reaches the page as bytes from `bridge.js` (a `FontFace`),
-because Chrome would not let the page load it from the extension's URL. The caption data is the player's own response, copied as it
+(~3.7% of its height). The font reaches the page as bytes (`background.js` → `bridge.js` →
+a `FontFace`): Chrome refuses the extension's font URL to the page and to content scripts. The caption data is the player's own response, copied as it
 arrives; without it, YouTube's captions stay, restyled.
 
 Drag a caption up or down when the video has text or UI where it sits; it stays centred

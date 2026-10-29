@@ -54,6 +54,15 @@ const VOICE_URL = "http://127.0.0.1:7845";
 // a new server feature stayed blocked until the extension itself was reloaded.
 const VOICE_PATH = /^\/[a-z]+$/;
 
+// The subtitle font for subtitles.js, base64-encoded like the audio.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "font") return;
+  fetch(chrome.runtime.getURL("fonts/Geist-Variable.woff2"))
+    .then((response) => response.arrayBuffer())
+    .then((buffer) => sendResponse({ data: toBase64(new Uint8Array(buffer)) }), () => sendResponse(null));
+  return true; // answer asynchronously
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "voice" || !VOICE_PATH.test(message.path ?? "")) return;
   voiceRequest(message).then(sendResponse, () => sendResponse(null));
