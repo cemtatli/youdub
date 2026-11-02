@@ -64,3 +64,7 @@ Caption approach from [voice-over-translation](https://github.com/ilyhalight/voi
 Font: [Geist](https://vercel.com/font) by Vercel (SIL OFL 1.1).
 Pronunciations: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) (BSD).
 Word frequencies: [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (MIT code, CC-BY-SA-4.0 data).
+
+## License
+
+[MIT](LICENSE)

@@ -64,3 +64,7 @@ Altyazı yaklaşımı: [voice-over-translation](https://github.com/ilyhalight/vo
 Font: Vercel'in [Geist](https://vercel.com/font) fontu (SIL OFL 1.1).
 Telaffuzlar: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) (BSD).
 Kelime frekansları: [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (MIT kod, CC-BY-SA-4.0 veri).
+
+## Lisans
+
+[MIT](LICENSE)
