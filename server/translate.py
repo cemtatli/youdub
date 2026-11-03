@@ -11,6 +11,7 @@ It runs in worker.py's child process, never in the server itself (see there why)
 """
 
 import re
+import unicodedata
 from pathlib import Path
 
 MODEL = Path(__file__).parent / "models" / "opus-mt-en-tr"
@@ -28,6 +29,22 @@ LEADING = re.compile(
     re.I,
 )
 FILLERS = re.compile(r",?\s*\b(?:um+|uh+|basically|literally)\b,?(?=\s|$)|,\s*you know\b,?(?=\s|$)", re.I)
+
+# Characters the model's vocabulary doesn't know come out as "<unk>", and the voice says
+# "unk". Symbols that mean something become words first; accents are dropped (café -> cafe);
+# anything else unknown (♪, emoji, braces) is removed. See clean().
+SYMBOLS = [
+    (re.compile(r"\s*°\s*C\b", re.I), " degrees Celsius"),
+    (re.compile(r"\s*°\s*F\b", re.I), " degrees Fahrenheit"),
+    (re.compile(r"\s*°"), " degrees"),
+    (re.compile(r"€\s*([\d.,]+)|([\d.,]+)\s*€"), lambda m: f"{m[1] or m[2]} euros"),
+    (re.compile(r"£\s*([\d.,]+)|([\d.,]+)\s*£"), lambda m: f"{m[1] or m[2]} pounds"),
+    (re.compile(r"(\d)\s*×"), r"\1x"),
+    (re.compile(r"[€]"), " euro"),
+    (re.compile(r"[£]"), " pound"),
+    (re.compile(r"[×]"), " times "),
+    (re.compile(r"⁄"), "/"),
+]
 
 translator = None
 source_spm = None
@@ -50,7 +67,18 @@ def load():
     target_spm = sentencepiece.SentencePieceProcessor(model_file=str(MODEL / "target.spm"))
 
 
+def clean(text):
+    for pattern, repl in SYMBOLS:
+        text = pattern.sub(repl, text)
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    for pattern, repl in SYMBOLS[-1:]:  # NFKD turns ½ into 1⁄2
+        text = pattern.sub(repl, text)
+    unk = source_spm.unk_id()
+    return "".join(c for c in text if c.isspace() or unk not in source_spm.encode(c))
+
+
 def trim(text):
+    text = clean(text)
     text = FILLERS.sub("", LEADING.sub("", text.strip()))
     text = re.sub(r"\s+", " ", text).strip(" ,")
     return text[:1].upper() + text[1:]
@@ -72,7 +100,11 @@ def translate_many(items):
     ) if tokens else []
     out = [""] * len(items)
     for i, result in zip(todo, results):
-        options = [(target_spm.decode(h), s) for h, s in zip(result.hypotheses, result.scores)]
+        # The model can still emit "<unk>" (it copies what it can't translate); never speak it.
+        options = [
+            (re.sub(r"\s+", " ", target_spm.decode([p for p in h if p != "<unk>"])).strip(), s)
+            for h, s in zip(result.hypotheses, result.scores)
+        ]
         out[i] = choose(options, items[i][1])
     return out
 

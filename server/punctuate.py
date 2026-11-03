@@ -9,6 +9,8 @@ It is needed once per video and runs in worker.py's child process, which goes aw
 idle, so its ~140 MB are not held while the video plays.
 """
 
+import re
+import unicodedata
 from pathlib import Path
 
 MODEL = Path(__file__).parent / "models" / "punct-en"
@@ -23,4 +25,30 @@ def sentences(text):
     from punctuators.models.punc_cap_seg_model import PunctCapSegConfigONNX, PunctCapSegModelONNX
 
     model = PunctCapSegModelONNX(PunctCapSegConfigONNX(directory=str(MODEL), **FILES))
-    return [s.replace("<Unk>", "-") for s in model.infer([text], apply_sbd=True)[0]]
+    sentences = model.infer([prepare(text)], apply_sbd=True)[0]
+    # Characters outside the model's vocabulary come back as "<unk>" (any case); the voice
+    # would say "unk". prepare() removes most of them, this catches the rest.
+    sentences = [re.sub(r"\s+", " ", UNK.sub(" ", s)).strip() for s in sentences]
+    return [s for s in sentences if re.search(r"\w", s)]
+
+
+UNK = re.compile(r"\s*<unk>\s*", re.I)
+# Auto captions mark sounds as [Music], [Applause], (laughs) and speaker changes as ">>".
+# They are not speech, and the brackets are outside the model's vocabulary ("<unk>usic<unk>").
+NOT_SPEECH = re.compile(r"\[[^\]]*\]|\([^)]*\)|>>|♪+")
+
+
+def prepare(text):
+    from translate import SYMBOLS  # plain regexes, no model load
+
+    text = NOT_SPEECH.sub(" ", text)
+    for pattern, repl in SYMBOLS:
+        text = pattern.sub(repl, text)
+    # The model adds punctuation to bare text; punctuation already there gets doubled
+    # (",, OK,?."). Numbers keep theirs (2.5, 1,200).
+    text = re.sub(r"(?<!\d)[.,!?;:]+|[.,!?;:]+(?!\d)", " ", text)
+    # café -> cafe, Zoë -> Zoe: accented letters are also outside the vocabulary.
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    # The model's vocabulary is lowercase only (spe_32k_lc_en): any capital letter is "<unk>"
+    # ("Celsius" -> "<unk>elsius"). It puts the capitals back itself.
+    return re.sub(r"\s+", " ", text).strip().lower()
