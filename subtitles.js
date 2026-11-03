@@ -429,7 +429,7 @@
     const button = document.createElement("button");
     button.id = BUTTON_ID;
     button.className = "ytp-button";
-    button.title = "Türkçe altyazı (youdub)";
+    button.title = "Türkçe altyazı (Knobs)";
     button.setAttribute("aria-label", button.title);
     button.appendChild(icon());
     button.addEventListener("click", () => setOn(!on));

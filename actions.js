@@ -310,6 +310,12 @@
   } catch {}
   document.documentElement.classList.toggle("youdub-minimal", state.minimal);
 
+  // The popup's minimal-mode switch, relayed by features.js.
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.data?.source !== "youdub-ext" || event.data.type !== "minimal") return;
+    if (event.data.on !== state.minimal) setMinimal(!!event.data.on);
+  });
+
   // --- row buttons ----------------------------------------------------------
 
   // Tooltip like the row's own ("Kaydet"); a stylesheet because it needs :hover.

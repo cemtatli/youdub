@@ -1,0 +1,68 @@
+{
+  "extDescription": {
+    "message": "Extra knobs for YouTube: Turkish voice-over, subtitles, minimal mode and real thumbnails. Runs on your own machine."
+  },
+  "tagline": {
+    "message": "Extra knobs for YouTube."
+  },
+  "sectionFeed": {
+    "message": "Feed"
+  },
+  "sectionWatch": {
+    "message": "Watching"
+  },
+  "thumbsName": {
+    "message": "Real thumbnails"
+  },
+  "thumbsHint": {
+    "message": "A real frame, not the cover"
+  },
+  "frameGroup": {
+    "message": "Which frame"
+  },
+  "frameStart": {
+    "message": "Start"
+  },
+  "frameMiddle": {
+    "message": "Middle"
+  },
+  "frameEnd": {
+    "message": "End"
+  },
+  "shortsName": {
+    "message": "Hide Shorts"
+  },
+  "shortsHint": {
+    "message": "Gone from the feed and search"
+  },
+  "watchedName": {
+    "message": "Watched videos"
+  },
+  "watchedHint": {
+    "message": "80% or more watched"
+  },
+  "watchedOff": {
+    "message": "Normal"
+  },
+  "watchedDim": {
+    "message": "Dim"
+  },
+  "watchedHide": {
+    "message": "Hide"
+  },
+  "minimalName": {
+    "message": "Minimal mode"
+  },
+  "minimalHint": {
+    "message": "Hides recommendations"
+  },
+  "minimalNoTab": {
+    "message": "Works in a YouTube tab"
+  },
+  "minimalReload": {
+    "message": "Works in a YouTube tab (reload it if needed)"
+  },
+  "footerLocal": {
+    "message": "Everything runs on your device"
+  }
+}

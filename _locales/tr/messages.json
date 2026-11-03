@@ -1,0 +1,68 @@
+{
+  "extDescription": {
+    "message": "YouTube'a ekstra düğmeler: Türkçe seslendirme, altyazı, minimal mod ve gerçek kapak. Kendi bilgisayarında çalışır."
+  },
+  "tagline": {
+    "message": "YouTube'a ekstra düğmeler."
+  },
+  "sectionFeed": {
+    "message": "Akış"
+  },
+  "sectionWatch": {
+    "message": "İzleme"
+  },
+  "thumbsName": {
+    "message": "Gerçek kapak"
+  },
+  "thumbsHint": {
+    "message": "Kapak yerine videodan bir kare"
+  },
+  "frameGroup": {
+    "message": "Hangi kare"
+  },
+  "frameStart": {
+    "message": "Baş"
+  },
+  "frameMiddle": {
+    "message": "Orta"
+  },
+  "frameEnd": {
+    "message": "Son"
+  },
+  "shortsName": {
+    "message": "Shorts'u gizle"
+  },
+  "shortsHint": {
+    "message": "Akıştan ve aramadan kalkar"
+  },
+  "watchedName": {
+    "message": "İzlenenler"
+  },
+  "watchedHint": {
+    "message": "%80'i izlenmiş videolar"
+  },
+  "watchedOff": {
+    "message": "Normal"
+  },
+  "watchedDim": {
+    "message": "Soluk"
+  },
+  "watchedHide": {
+    "message": "Gizle"
+  },
+  "minimalName": {
+    "message": "Minimal mod"
+  },
+  "minimalHint": {
+    "message": "Önerileri gizler, video kalır"
+  },
+  "minimalNoTab": {
+    "message": "Bir YouTube sekmesinde çalışır"
+  },
+  "minimalReload": {
+    "message": "Bir YouTube sekmesinde çalışır (gerekirse sayfayı yenile)"
+  },
+  "footerLocal": {
+    "message": "Her şey cihazında çalışır"
+  }
+}

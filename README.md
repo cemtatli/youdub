@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="icons/logo.svg" width="112" alt="youdub logo">
+  <img src="icons/mascot-readme.png" width="200" alt="Knobs mascot: a red control knob with a bucket of popcorn">
 </p>
 
-<h1 align="center">youdub</h1>
+<h1 align="center">Knobs</h1>
 
 <p align="center">
-  Watch YouTube in Turkish. A Chrome extension that dubs videos with a Turkish voice, on your own machine.<br>
-  No cloud, no API keys.
+  Extra knobs for YouTube. A Chrome extension that adds a Turkish voice-over, better subtitles,<br>
+  a minimal mode, honest thumbnails and a cleaner feed. Everything runs on your own machine: no cloud, no API keys.
 </p>
 
 <p align="center"><b>English</b> · <a href="README.tr.md">Türkçe</a></p>
@@ -20,6 +20,9 @@
 - **Turkish subtitles**: the globe button shows Turkish captions a sentence at a time, Netflix-style. Drag them up or down; double-click to reset.
 - **Watch later**: one click under the video adds or removes it.
 - **Minimal mode**: hides recommendations so only the video (and chapters) remain.
+- **Real thumbnails**: swaps clickbait thumbnails for a real frame from the video (start, middle or end). Toggle it from the toolbar icon.
+- **Hide Shorts**: removes Shorts shelves, the Shorts menu entry and Shorts in search.
+- **Watched videos**: dims or hides videos you've mostly watched (80%+). Never on your history or playlists.
 - **Ads**: stays silent during ads.
 
 ## Install
@@ -30,9 +33,9 @@
    ```
    Sets up the local voice and models (~320 MB) and registers them with Chrome, Brave, Chromium and Helium.
 2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick this folder.
-3. Open a YouTube video and press **TR**.
+3. Open a YouTube video and press **TR**. Click the Knobs icon in the toolbar for settings: thumbnails, Shorts, watched videos and minimal mode.
 
-If the local voice can't start, youdub falls back to the browser's Turkish voice.
+If the local voice can't start, Knobs falls back to the browser's Turkish voice.
 
 ## Models
 
@@ -49,7 +52,7 @@ About 730 MB of RAM while **TR** is on. Translation runs in a separate low-prior
 ## Debugging
 
 - Page console: `__youdub.state`, `__youdub.setOn(true)`. Logs use the `[youdub]` prefix.
-- Voice logs: `chrome://extensions` → youdub → service worker.
+- Voice logs: `chrome://extensions` → Knobs → service worker.
 - Run the voice by hand: `server/run.sh`.
 
 ## Known limits
@@ -61,6 +64,7 @@ About 730 MB of RAM while **TR** is on. Translation runs in a separate low-prior
 ## Credits
 
 Caption approach from [voice-over-translation](https://github.com/ilyhalight/voice-over-translation) (MIT).
+Real thumbnails adapted from [Honest Thumbnails](https://github.com/851-labs/honest-thumbnails) by 851 Labs (MIT).
 Font: [Geist](https://vercel.com/font) by Vercel (SIL OFL 1.1).
 Pronunciations: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) (BSD).
 Word frequencies: [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (MIT code, CC-BY-SA-4.0 data).

@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="icons/logo.svg" width="112" alt="youdub logosu">
+  <img src="icons/mascot-readme.png" width="200" alt="Knobs maskotu: elinde patlamış mısırla kırmızı bir ayar düğmesi">
 </p>
 
-<h1 align="center">youdub</h1>
+<h1 align="center">Knobs</h1>
 
 <p align="center">
-  YouTube'u Türkçe izle. Videoları kendi bilgisayarında Türkçe seslendiren bir Chrome eklentisi.<br>
-  Bulut yok, API anahtarı yok.
+  YouTube'a ekstra düğmeler. Türkçe seslendirme, daha iyi altyazı, minimal mod, dürüst kapak görselleri<br>
+  ve daha sade bir akış ekleyen bir Chrome eklentisi. Her şey kendi bilgisayarında çalışır: bulut yok, API anahtarı yok.
 </p>
 
 <p align="center"><a href="README.md">English</a> · <b>Türkçe</b></p>
@@ -20,6 +20,9 @@
 - **Türkçe altyazı**: dünya butonu, Türkçe altyazıyı Netflix tarzı cümle cümle gösterir. Yukarı aşağı sürüklenebilir, çift tıkla eski yerine döner.
 - **Daha sonra izle**: videonun altındaki butonla tek tıkla ekle ya da çıkar.
 - **Minimal mod**: önerileri gizler, sadece video (ve bölümler) kalır.
+- **Gerçek kapak**: clickbait kapak görselleri yerine videodan gerçek bir kare gösterir (baş, orta ya da son). Araç çubuğundaki ikondan açılıp kapanır.
+- **Shorts'u gizle**: Shorts raflarını, menüdeki Shorts girişini ve aramadaki Shorts'ları kaldırır.
+- **İzlenenler**: büyük kısmını (%80+) izlediğin videoları soluk gösterir ya da gizler. Geçmiş ve oynatma listelerinde çalışmaz.
 - **Reklamlar**: reklam sırasında sessiz kalır.
 
 ## Kurulum
@@ -30,9 +33,9 @@
    ```
    Yerel sesi ve modelleri (~320 MB) kurar. Chrome, Brave, Chromium ve Helium'a tanıtır.
 2. `chrome://extensions` aç, **Geliştirici modu**'nu aç, **Paketlenmemiş öğe yükle** ile bu klasörü seç.
-3. Bir YouTube videosu aç ve **TR**'ye bas.
+3. Bir YouTube videosu aç ve **TR**'ye bas. Ayarlar için araç çubuğundaki Knobs ikonuna tıkla: kapak, Shorts, izlenenler ve minimal mod.
 
-Yerel ses açılamazsa youdub tarayıcının Türkçe sesine geçer.
+Yerel ses açılamazsa Knobs tarayıcının Türkçe sesine geçer.
 
 ## Modeller
 
@@ -49,7 +52,7 @@ Hepsi işlemcinde çalışır. Hiçbir şey bilgisayarından çıkmaz.
 ## Hata ayıklama
 
 - Sayfa konsolu: `__youdub.state`, `__youdub.setOn(true)`. Loglar `[youdub]` önekiyle gelir.
-- Ses logları: `chrome://extensions` → youdub → service worker.
+- Ses logları: `chrome://extensions` → Knobs → service worker.
 - Sesi elle başlatmak için: `server/run.sh`.
 
 ## Bilinen sınırlar
@@ -61,6 +64,7 @@ Hepsi işlemcinde çalışır. Hiçbir şey bilgisayarından çıkmaz.
 ## Teşekkürler
 
 Altyazı yaklaşımı: [voice-over-translation](https://github.com/ilyhalight/voice-over-translation) (MIT).
+Gerçek kapak: 851 Labs'in [Honest Thumbnails](https://github.com/851-labs/honest-thumbnails) eklentisinden uyarlandı (MIT).
 Font: Vercel'in [Geist](https://vercel.com/font) fontu (SIL OFL 1.1).
 Telaffuzlar: [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) (BSD).
 Kelime frekansları: [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (MIT kod, CC-BY-SA-4.0 veri).
