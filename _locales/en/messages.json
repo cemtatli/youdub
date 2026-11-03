@@ -64,5 +64,8 @@
   },
   "footerLocal": {
     "message": "Everything runs on your device"
+  },
+  "watchedBadge": {
+    "message": "Watched"
   }
 }

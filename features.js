@@ -26,8 +26,19 @@
     "[class*='WatchedProgressBarSegment']",
   ].join(",");
 
+  // Where the picture and the title live inside a card, old renderers and the new lockup.
+  const THUMB = "ytd-thumbnail, yt-thumbnail-view-model";
+  const META = "#details, #meta, #metadata, yt-lockup-metadata-view-model";
+  const CHECK =
+    "data:image/svg+xml," +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+    );
+
   let settings = { ...DEFAULTS };
   const html = document.documentElement;
+  // The badge text, in the browser's language (CSS can't read chrome.i18n itself).
+  const LABEL = JSON.stringify(chrome.i18n.getMessage("watchedBadge") || "Watched");
 
   // --- styles ---------------------------------------------------------------
 
@@ -52,12 +63,36 @@
     style.id = "knobs-features-style";
     style.textContent = `
       ${SHORTS.map((s) => `html.knobs-no-shorts ${s}`).join(",\n      ")} { display: none !important; }
-      html.knobs-watched-dim [data-knobs-watched] {
-        opacity: 0.4;
-        filter: saturate(0.4);
-        transition: opacity 0.2s ease, filter 0.2s ease;
+      /* Dim: grey, darker picture and a faded title; the badge stays crisp. */
+      html.knobs-watched-dim [data-knobs-watched] :is(${THUMB}) img {
+        filter: grayscale(0.7) brightness(0.55);
+        transition: filter 0.2s ease;
       }
-      html.knobs-watched-dim [data-knobs-watched]:hover { opacity: 1; filter: none; }
+      html.knobs-watched-dim [data-knobs-watched] :is(${META}) {
+        opacity: 0.55;
+        transition: opacity 0.2s ease;
+      }
+      html.knobs-watched-dim [data-knobs-watched]:hover :is(${THUMB}) img { filter: none; }
+      html.knobs-watched-dim [data-knobs-watched]:hover :is(${META}) { opacity: 1; }
+      /* "✓ Watched" chip centred on the darkened picture, in YouTube's badge style. */
+      html.knobs-watched-dim [data-knobs-watched] :is(${THUMB}) { position: relative; }
+      html.knobs-watched-dim [data-knobs-watched] :is(${THUMB})::after {
+        content: ${LABEL};
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        white-space: nowrap;
+        z-index: 2;
+        padding: 6px 12px 6px 34px;
+        border-radius: 4px;
+        background: rgb(0 0 0 / 0.7) no-repeat 12px 50% / 16px 16px url("${CHECK}");
+        color: #fff;
+        font: 500 14px/20px Roboto, Arial, sans-serif;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+      }
+      html.knobs-watched-dim [data-knobs-watched]:hover :is(${THUMB})::after { opacity: 0; }
       html.knobs-watched-hide [data-knobs-watched] { display: none !important; }
     `;
     (document.head || html).append(style);

@@ -64,5 +64,8 @@
   },
   "footerLocal": {
     "message": "Her şey cihazında çalışır"
+  },
+  "watchedBadge": {
+    "message": "İzlendi"
   }
 }
